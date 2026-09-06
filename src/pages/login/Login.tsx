@@ -2,14 +2,14 @@ import { useState } from "react";
 import { commonStyles } from "../../components/theme/default";
 import { useAuth } from "../../context/AuthContext";
 import { API_LOGIN, API_SESSION } from "../../constants/config";
-import type { UserSession } from "../../session/UserSession";
-import { useUserSession } from "../../context/UserSessionContext";
+// import type { UserSession } from "../../session/UserSession";
+// import { useUserSession } from "../../context/UserSessionContext";
 import "../../animation.css"
 function Login({ onSwitchToSignup }: { onSwitchToSignup: () => void }) {  const { login } = useAuth();
   const [email, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
-  const {setSession} = useUserSession(); 
+  // const {setSession} = useUserSession(); 
  
 
   const handleLogin = async() => {
@@ -49,10 +49,10 @@ function Login({ onSwitchToSignup }: { onSwitchToSignup: () => void }) {  const 
             body: JSON.stringify({ user_id:info}),
           });
           text = await response.text();
-          const parsed: UserSession = await JSON.parse(text);
+          // const parsed: UserSession = await JSON.parse(text);
           
-          console.log(parsed);
-          setSession(parsed)
+          // console.log(parsed);
+          // setSession(parsed)
           login();
           return; 
       }

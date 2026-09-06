@@ -1,50 +1,34 @@
 // UserSession.ts
+export enum AssignmentType {
+  speaking="speaking"
+}
 
 export interface UserInfo {
   id: string;
-  name: string;
-  last_name: string;
-  date_of_birth: string;
-  email: string;
-  phone: string;
+  group: string;
+  teacher: string; 
+  password: string;
+  assigments: Assigment[]; 
 }
 
-export interface Card {
+export interface Unit{
+  id: string; 
+  content: any; 
+  answer: any; 
+  grade: string | null; 
+}
+ 
+export interface Assigment{
+  id: string; 
+  type: AssignmentType;  
+  grade: string | null;
+  units: Unit[]
+}
+
+ 
+
+export interface AssignmentSession {
   id: string;
-  name_on_card: string;
-  card_number: string;
-  expiry_date: string;
-  cvv: string;
-  card_type: string;
+  user: string;
+  assigment: Assigment; 
 }
-
-export interface TripHistory {
-  id: string;
-  route_name: string;
-  driver: string;
-  drop_off_point: string;
-  price: number;
-  payment_method: Card ;
-  date: string;
-  status: string;
-}
-
-export interface NotificationSettings {
-  trip_updates: boolean;
-  price_changes: boolean;
-  security_alerts: boolean;
-  promotions: boolean;
-}
-
-export interface UserSettings {
-  notifications: NotificationSettings;
-  language: string;
-}
-
-export interface UserSession {
-  user: UserInfo;
-  cards: Card[];
-  history: TripHistory[];
-  settings: UserSettings;
-}
-

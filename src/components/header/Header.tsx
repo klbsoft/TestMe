@@ -31,6 +31,7 @@ function Header() {
   flexShrink: 0,
   backgroundColor: commonStyles.purple,
   display: "flex",
+  // display:"none",
   alignItems: "center",
   justifyContent: "space-between",
   height: "60px", // Slightly taller for better proportions

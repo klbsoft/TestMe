@@ -1,4 +1,4 @@
-import { useState } from "react";
+`import { useState } from "react";
 import { commonStyles } from "../../components/theme/default";
 import { useUserSession } from "../../context/UserSessionContext";
 import "../../animation.css"
@@ -31,7 +31,7 @@ const handleChange = (field: string, value: string) => {
   const inputStyle: React.CSSProperties = {
     borderRadius: "20px",
     padding: "12px 16px",
-    border: `2px solid ${commonStyles.green}`,
+    border: 2px solid commonStyles.green,
     backgroundColor: "#FFFFFF",
     color: commonStyles.blue,
     width: "100%",
@@ -175,4 +175,8 @@ const handleChange = (field: string, value: string) => {
   );
 }
 
-export default Profile;
+export default Profile;`
+
+export default function Profile(){
+  return (<></>)
+}

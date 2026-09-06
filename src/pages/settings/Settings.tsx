@@ -1,3 +1,4 @@
+let settigns = `
 import { useEffect, useState } from "react";
 import { commonStyles } from "../../components/theme/default";
 import { useView } from "../../context/ViewContext";
@@ -161,7 +162,7 @@ useEffect(() => {
               style={{
                 borderRadius: "20px",
                 padding: "12px 16px",
-                border: `2px solid ${commonStyles.green}`,
+                border: 2px solid commonStyles.green,
                 backgroundColor: "#FFFFFF",
                 color: commonStyles.blue,
                 width: "100%",
@@ -241,3 +242,8 @@ useEffect(() => {
 }
 
 export default Settings;
+`;
+
+export default function Settings(){
+  return (<></>);
+}

@@ -37,14 +37,14 @@ export default function ProgressBar(){
                 <label style={{
                     fontSize: commonStyles.button_fontSize,
                     fontWeight: commonStyles.button_fontWeight,
-                    color: commonStyles.green,
+                    color: commonStyles.purple,
                 }}>
                     {currentValue}/{total}
                 </label>
                 <label style={{
                     fontSize: commonStyles.button_fontSize,
                     fontWeight: commonStyles.button_fontWeight,
-                    color: commonStyles.green,
+                    color: commonStyles.purple,
                 }}>
                     {Math.round(progress)}%
                 </label>
@@ -60,7 +60,7 @@ export default function ProgressBar(){
                 style={{
                     width: "100%",
                     height: "20px",
-                    backgroundColor: commonStyles.green,
+                    backgroundColor: commonStyles.faded_purple,
                     borderRadius: "10px",
                     cursor: "pointer",
                     position: "relative",
@@ -70,7 +70,7 @@ export default function ProgressBar(){
                 <div style={{
                     width: `${progress}%`,
                     height: "100%",
-                    backgroundColor: commonStyles.green,
+                    backgroundColor: commonStyles.purple,
                     borderRadius: "10px",
                     transition: isDragging ? "none" : "width 0.3s ease",
                 }} />

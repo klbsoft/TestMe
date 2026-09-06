@@ -9,7 +9,7 @@ export default function Avatar(){
             display: "flex",
             flexDirection: "column",
             alignItems: "center",
-            paddingTop: "12px",
+            paddingTop: "8px",
         }}>
             <Message/>
             <img 

@@ -1,10 +1,27 @@
-    ## file number: 1
-    ## starting ./ActionBtn.tsx ##
-    import { commonStyles } from "../../components/theme/default";
+## file number: 1
+## starting ./ActionBtn.tsx ##
+import { useState, useEffect } from "react";
+import { commonStyles } from "../../components/theme/default";
 
-    export default function ActionBtn(){
-        return (
-            <div style={{
+export default function ActionBtn(){
+    const [isRecording, setIsRecording] = useState(false);
+    const [waveHeights, setWaveHeights] = useState<number[]>([10, 20, 15, 30, 25, 35, 20, 15, 25, 30, 15, 20]);
+
+    useEffect(() => {
+        if (isRecording) {
+            const interval = setInterval(() => {
+                setWaveHeights(prev => 
+                    prev.map(() => Math.floor(Math.random() * 40) + 5)
+                );
+            }, 100);
+            return () => clearInterval(interval);
+        }
+    }, [isRecording]);
+
+    return (
+        <div 
+            onClick={() => setIsRecording(!isRecording)}
+            style={{
                 backgroundColor: commonStyles.purple,
                 borderRadius: "15px",
                 padding: "15px 20px",
@@ -12,245 +29,362 @@
                 justifyContent: "center",
                 alignItems: "center",
                 cursor: "pointer",
-            }}>
+                gap: "5px",
+                minHeight: "50px",
+            }}
+        >
+            {isRecording ? (
+                <div style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "3px",
+                    height: "40px",
+                }}>
+                    {waveHeights.map((height, index) => (
+                        <div
+                            key={index}
+                            style={{
+                                width: "4px",
+                                height: `${height}px`,
+                                backgroundColor: commonStyles.white,
+                                borderRadius: "2px",
+                                transition: "height 0.15s ease-in-out",
+                            }}
+                        />
+                    ))}
+                </div>
+            ) : (
                 <div style={{
                     color: commonStyles.white,
                     fontSize: commonStyles.button_fontSize,
                     fontWeight: commonStyles.button_fontWeight,
                 }}>
-                    Run Action
+                   Start Assigment
                 </div>
-            </div>
-        )
-    }
-    ## ending of file ./ActionBtn.tsx ##
+            )}
+        </div>
+    )
+}
+## ending of file ./ActionBtn.tsx ##
 
-    ## file number: 2
-    ## starting ./Avatar.tsx ##
-    import { useState } from "react";
-    import Message from "./Message";
-    import { defaultSetting } from "../../components/theme/default";
+## file number: 2
+## starting ./Avatar.tsx ##
+import { useState } from "react";
+import Message from "./Message";
+import { defaultSetting } from "../../components/theme/default";
 
-    export default function Avatar(){
-        const [bot, setBot] = useState<string>(`${defaultSetting.base_bot}bot.svg`);
-        return (
-            <div style={{
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                paddingTop: "12px",
-            }}>
-                <Message/>
-                <img 
-                    src={bot}
-                    width={"120px"}
-                    height={"120px"}
-                    style={{ marginTop: "10px" }}
-                />
-            </div>
-        )
-    }
-    ## ending of file ./Avatar.tsx ##
-
-    ## file number: 3
-    ## starting ./Describe.tsx ##
-    import { useState } from "react";
-    import "../../animation.css"
-    import Image from "./Image";
-    import Avatar from "./Avatar";
-    import ActionBtn from "./ActionBtn";
-
-    export default function DescribeTheImage() {
-    const [isRecording, setIsRecording] = useState(false);
-    const [recordedAudio, setRecordedAudio] = useState<string | null>(null);
-    
-    // Placeholder image - replace with actual assignment image
-    const sampleImage = "/path/to/sample/image.jpg";
-
+export default function Avatar(){
+    const [bot, setBot] = useState<string>(`${defaultSetting.base_bot}bot.svg`);
     return (
         <div style={{
-        width: "100%",
-        height: "100%",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            paddingTop: "8px",
+        }}>
+            <Message/>
+            <img 
+                src={bot}
+                width={"120px"}
+                height={"120px"}
+                style={{ marginTop: "10px" }}
+            />
+        </div>
+    )
+}
+## ending of file ./Avatar.tsx ##
+
+## file number: 3
+## starting ./Describe.tsx ##
+import { useState, useEffect } from "react";
+import "../../animation.css"
+import Image from "./Image";
+import Avatar from "./Avatar";
+import ActionBtn from "./ActionBtn";
+
+export default function DescribeTheImage() {
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordedAudio, setRecordedAudio] = useState<string | null>(null);
+  const [windowWidth, setWindowWidth] = useState(window.innerWidth);
+
+  useEffect(() => {
+    const handleResize = () => setWindowWidth(window.innerWidth);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  const isDesktop = windowWidth > 400;
+
+  return (
+    <div style={{
+      width: "100%",
+      height: "100%",
+      display: "flex",
+      flexDirection: isDesktop ? "row" : "column",
+      alignItems: isDesktop ? "flex-start" : "center",
+      overflowY: "auto",
+      padding: "20px",
+      boxSizing: "border-box",
+      gap: "20px",
+    }}>
+      {/* Left side - Avatar and ActionBtn */}
+      <div style={{
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
-        overflowY: "auto",
-        padding: "20px",
-        boxSizing: "border-box",
-        }}>
-        <Image/>
+        width: isDesktop ? "40%" : "100%",
+        order: isDesktop ? 1 : 2,
+      }}>
         <Avatar/>
         <ActionBtn/>
-        </div>
-    );
-    }
-    ## ending of file ./Describe.tsx ##
+      </div>
 
-    ## file number: 4
-    ## starting ./Image.tsx ##
-    import { defaultSetting, commonStyles } from "../../components/theme/default";
-    import { useState, useEffect } from "react";
-    import ProgressBar from "./ProgressBar";
+      {/* Right side - Image */}
+      <div style={{
+        width: isDesktop ? "60%" : "100%",
+        order: isDesktop ? 2 : 1,
+      }}>
+        <Image/>
+      </div>
+    </div>
+  );
+}
+## ending of file ./Describe.tsx ##
 
-    export default function Image(){
-        const [windowWidth, setWindowWidth] = useState(window.innerWidth);
+## file number: 4
+## starting ./Image.tsx ##
+import { defaultSetting, commonStyles } from "../../components/theme/default";
+import { useState, useEffect } from "react";
+import ProgressBar from "./ProgressBar";
 
-        useEffect(() => {
-            const handleResize = () => setWindowWidth(window.innerWidth);
-            window.addEventListener('resize', handleResize);
-            return () => window.removeEventListener('resize', handleResize);
-        }, []);
+export default function Image(){
+    const [windowWidth, setWindowWidth] = useState(window.innerWidth);
+    const [isBlurred, setIsBlurred] = useState(true);
 
-        const isDesktop = windowWidth > 400;
+    useEffect(() => {
+        const handleResize = () => setWindowWidth(window.innerWidth);
+        window.addEventListener('resize', handleResize);
+        return () => window.removeEventListener('resize', handleResize);
+    }, []);
 
-        return (
+    const isDesktop = windowWidth > 400;
+
+    return (
+        <div style={{
+            width: "100%",
+            display: "flex",
+            justifyContent: isDesktop ? "flex-end" : "center",
+            paddingRight: isDesktop ? "20%" : "0",
+        }}
+        onClick={()=>{
+            setIsBlurred(isBlurred?false:true);
+        }}
+        >
             <div style={{
-                width: "100%",
-                display: "flex",
-                justifyContent: isDesktop ? "flex-end" : "center",
-                paddingRight: isDesktop ? "20%" : "0",
-            }}>
-                <div style={{
-                    width: "80%",
-                    maxWidth: "600px",
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: "10px",
-                }}>
-                    <img 
-                        src={`${defaultSetting.base_bank}view.jpg`}
-                        style={{
-                            width: "100%",
-                            aspectRatio: "1 / 1",
-                            objectFit: "cover",
-                        }}
-                    />
-                    <ProgressBar/>
-                </div>
-            </div>
-        )
-    }
-    ## ending of file ./Image.tsx ##
-
-    ## file number: 5
-    ## starting ./Message.tsx ##
-    import { commonStyles } from "../../components/theme/default";
-
-    export default function Message(){
-        return (
-            <div style={{
-                position: "relative",
-                backgroundColor: commonStyles.purple,
-                borderRadius: "15px",
-                padding: "15px 20px",
-                maxWidth: "300px",
-            }}>
-                {/* Triangle spike */}
-                <div style={{
-                    position: "absolute",
-                    bottom: "-10px",
-                    left: "50%",
-                    transform: "translateX(-50%)",
-                    width: 0,
-                    height: 0,
-                    borderLeft: "10px solid transparent",
-                    borderRight: "10px solid transparent",
-                    borderTop: `10px solid ${commonStyles.purple}`,
-                }} />
-                
-                <label style={{
-                    color: commonStyles.white,
-                    fontSize: commonStyles.button_fontSize,
-                    fontWeight: commonStyles.button_fontWeight,
-                }}>
-                    For now the bot is just saying something
-                </label>
-            </div>
-        )
-    }
-    ## ending of file ./Message.tsx ##
-
-    ## file number: 6
-    ## starting ./ProgressBar.tsx ##
-    import { useState } from "react";
-    import { commonStyles } from "../../components/theme/default";
-
-    export default function ProgressBar(){
-        const [progress, setProgress] = useState(0);
-        const [isDragging, setIsDragging] = useState(false);
-        const total = 10;
-
-        const handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
-            const rect = e.currentTarget.getBoundingClientRect();
-            const x = e.clientX - rect.left;
-            const percentage = (x / rect.width) * 100;
-            setProgress(Math.min(100, Math.max(0, percentage)));
-        };
-
-        const handleDrag = (e: React.MouseEvent<HTMLDivElement>) => {
-            if (isDragging) {
-                handleClick(e);
-            }
-        };
-
-        const currentValue = Math.round((progress / 100) * total);
-
-        return (
-            <div style={{
-                width: "100%",
+                width: "80%",
+                maxWidth: "600px",
                 display: "flex",
                 flexDirection: "column",
-                gap: "5px",
+                gap: "10px",
             }}>
-                <div style={{
-                    width: "100%",
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                }}>
-                    <label style={{
-                        fontSize: commonStyles.button_fontSize,
-                        fontWeight: commonStyles.button_fontWeight,
-                        color: commonStyles.green,
-                    }}>
-                        {currentValue}/{total}
-                    </label>
-                    <label style={{
-                        fontSize: commonStyles.button_fontSize,
-                        fontWeight: commonStyles.button_fontWeight,
-                        color: commonStyles.green,
-                    }}>
-                        {Math.round(progress)}%
-                    </label>
-                </div>
-                <div
-                    onMouseDown={(e) => {
-                        setIsDragging(true);
-                        handleClick(e);
-                    }}
-                    onMouseMove={handleDrag}
-                    onMouseUp={() => setIsDragging(false)}
-                    onMouseLeave={() => setIsDragging(false)}
+                <img 
+                    src={`${defaultSetting.base_bank}0.jpg`}
                     style={{
-                        width: "100%",
-                        height: "20px",
-                        backgroundColor: commonStyles.green,
+                        width: "80%",
+                        aspectRatio: "1 / 1",
+                        objectFit: "cover",
+                        border: `solid 2px ${commonStyles.white}`,
+                        borderRadius: "22px",
+                        boxShadow: "0 4px 8px rgba(0, 0, 0, 0.2)",
+                        filter: isBlurred ? "blur(8px)" : "blur(0px)",
+                        transition: "filter 0.5s ease-in-out",
+                        WebkitTransition: "filter 0.5s ease-in-out",
+                        MozTransition: "filter 0.5s ease-in-out",
+                    }}
+                />
+                {/* <button
+                    onClick={() => setIsBlurred(!isBlurred)}
+                    style={{
+                        padding: "10px 20px",
+                        backgroundColor: commonStyles.purple,
+                        color: commonStyles.white,
+                        border: "none",
                         borderRadius: "10px",
                         cursor: "pointer",
-                        position: "relative",
-                        userSelect: "none",
+                        fontSize: commonStyles.button_fontSize,
+                        fontWeight: commonStyles.button_fontWeight,
                     }}
                 >
-                    <div style={{
-                        width: `${progress}%`,
-                        height: "100%",
-                        backgroundColor: commonStyles.green,
-                        borderRadius: "10px",
-                        transition: isDragging ? "none" : "width 0.3s ease",
-                    }} />
+                    {isBlurred ? "Show Image" : "Hide Image"}
+                </button> */}
+                <ProgressBar/>
+            </div>
+        </div>
+    )
+}
+## ending of file ./Image.tsx ##
+
+## file number: 5
+## starting ./Message.tsx ##
+import { useState } from "react";
+import { commonStyles } from "../../components/theme/default";
+
+export default function Message(){
+    const [timeLeft, setTimeLeft] = useState(60); // Example: 60 seconds
+    const totalTime = 20; // Total time for the countdown
+
+    const percentage = 5; //(timeLeft / totalTime) * 100;
+
+    return (
+        <div style={{
+            position: "relative",
+            backgroundColor: commonStyles.purple,
+            borderRadius: "15px",
+            padding: "15px 20px",
+            maxWidth: "350px",
+            display: "flex",
+            alignItems: "center",
+            gap: "15px",
+        }}>
+            {/* Triangle spike */}
+            <div style={{
+                position: "absolute",
+                bottom: "-10px",
+                left: "50%",
+                transform: "translateX(-50%)",
+                width: 0,
+                height: 0,
+                borderLeft: "10px solid transparent",
+                borderRight: "10px solid transparent",
+                borderTop: `10px solid ${commonStyles.purple}`,
+            }} />
+            
+            <label style={{
+                color: commonStyles.white,
+                fontSize: commonStyles.button_fontSize,
+                fontWeight: commonStyles.button_fontWeight,
+                flex: 1,
+            }}>
+                For now the bot is just saying something              
+            </label>
+
+            {/* Timer circle */}
+            <div style={{
+                width: "50px",
+                height: "50px",
+                borderRadius: "50%",
+                background: `conic-gradient(${commonStyles.faded_purple} ${percentage}%, ${commonStyles.white} ${percentage}%)`,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                position: "relative",
+                flexShrink: 0,
+            }}>
+                {/* Inner circle */}
+                <div style={{
+                    width: "40px",
+                    height: "40px",
+                    borderRadius: "50%",
+                    backgroundColor: commonStyles.purple,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                }}>
+                    <span style={{
+                        color: commonStyles.white,
+                        fontSize: "14px",
+                        fontWeight: "bold",
+                    }}>
+                        {timeLeft}
+                    </span>
                 </div>
             </div>
-        )
-    }
-    ## ending of file ./ProgressBar.tsx ##
+        </div>
+    )
+}
+## ending of file ./Message.tsx ##
+
+## file number: 6
+## starting ./ProgressBar.tsx ##
+import { useState } from "react";
+import { commonStyles } from "../../components/theme/default";
+
+export default function ProgressBar(){
+    const [progress, setProgress] = useState(0);
+    const [isDragging, setIsDragging] = useState(false);
+    const total = 10;
+
+    const handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
+        const rect = e.currentTarget.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const percentage = (x / rect.width) * 100;
+        setProgress(Math.min(100, Math.max(0, percentage)));
+    };
+
+    const handleDrag = (e: React.MouseEvent<HTMLDivElement>) => {
+        if (isDragging) {
+            handleClick(e);
+        }
+    };
+
+    const currentValue = Math.round((progress / 100) * total);
+
+    return (
+        <div style={{
+            width: "100%",
+            display: "flex",
+            flexDirection: "column",
+            gap: "5px",
+        }}>
+            <div style={{
+                width: "100%",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+            }}>
+                <label style={{
+                    fontSize: commonStyles.button_fontSize,
+                    fontWeight: commonStyles.button_fontWeight,
+                    color: commonStyles.purple,
+                }}>
+                    {currentValue}/{total}
+                </label>
+                <label style={{
+                    fontSize: commonStyles.button_fontSize,
+                    fontWeight: commonStyles.button_fontWeight,
+                    color: commonStyles.purple,
+                }}>
+                    {Math.round(progress)}%
+                </label>
+            </div>
+            <div
+                onMouseDown={(e) => {
+                    setIsDragging(true);
+                    handleClick(e);
+                }}
+                onMouseMove={handleDrag}
+                onMouseUp={() => setIsDragging(false)}
+                onMouseLeave={() => setIsDragging(false)}
+                style={{
+                    width: "100%",
+                    height: "20px",
+                    backgroundColor: commonStyles.faded_purple,
+                    borderRadius: "10px",
+                    cursor: "pointer",
+                    position: "relative",
+                    userSelect: "none",
+                }}
+            >
+                <div style={{
+                    width: `${progress}%`,
+                    height: "100%",
+                    backgroundColor: commonStyles.purple,
+                    borderRadius: "10px",
+                    transition: isDragging ? "none" : "width 0.3s ease",
+                }} />
+            </div>
+        </div>
+    )
+}
+## ending of file ./ProgressBar.tsx ##
 

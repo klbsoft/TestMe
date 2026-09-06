@@ -10,7 +10,7 @@ import Auth from "../../pages/auth/Auth";
 import { FooterProvider } from "../../context/FooterContext";
 // import SignUp from "../../pages/singup/Singup";
 // import Login from "../../pages/login/Login";
-import { UserSessionProvider } from "../../context/UserSessionContext";
+// import { UserSessionProvider } from "../../context/UserSessionContext";
 import "../../animation.css"
 function Box() {
   const { isAuthenticated } = useAuth();
@@ -44,9 +44,9 @@ function Container() {
   
   return (
     <AuthProvider>
-      <UserSessionProvider>        
+      {/* <UserSessionProvider>         */}
         <Box />
-    </UserSessionProvider>
+    {/* </UserSessionProvider> */}
     </AuthProvider>
   );
 }
