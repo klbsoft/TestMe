@@ -8,14 +8,18 @@ export default function DescribeTheImage() {
   const [isRecording, setIsRecording] = useState(false);
   const [recordedAudio, setRecordedAudio] = useState<string | null>(null);
   const [windowWidth, setWindowWidth] = useState(window.innerWidth);
+  const [windowHeight, setWindowHeight] = useState(window.innerHeight);
 
   useEffect(() => {
-    const handleResize = () => setWindowWidth(window.innerWidth);
+    const handleResize = () => {
+      setWindowWidth(window.innerWidth);
+      setWindowHeight(window.innerHeight);
+    };
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  const isDesktop = windowWidth > 400;
+  const isDesktop = windowWidth > 800;
 
   return (
     <div style={{
@@ -23,19 +27,21 @@ export default function DescribeTheImage() {
       height: "100%",
       display: "flex",
       flexDirection: isDesktop ? "row" : "column",
-      alignItems: isDesktop ? "flex-start" : "center",
+      alignItems: "center",
+      justifyContent: "center",
       overflowY: "auto",
       padding: "20px",
       boxSizing: "border-box",
-      gap: "20px",
+      gap: "40px",
     }}>
       {/* Left side - Avatar and ActionBtn */}
       <div style={{
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
-        width: isDesktop ? "40%" : "100%",
+        width: isDesktop ? "auto" : "100%",
         order: isDesktop ? 1 : 2,
+        flexShrink: 0,
       }}>
         <Avatar/>
         <ActionBtn/>
@@ -43,10 +49,12 @@ export default function DescribeTheImage() {
 
       {/* Right side - Image */}
       <div style={{
-        width: isDesktop ? "60%" : "100%",
+        width: isDesktop ? "auto" : "100%",
         order: isDesktop ? 2 : 1,
+        flexShrink: 1,
+        minWidth: 0,
       }}>
-        <Image/>
+        <Image windowHeight={windowHeight} />
       </div>
     </div>
   );

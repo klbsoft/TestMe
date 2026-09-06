@@ -20,7 +20,7 @@ export default function ActionBtn(){
         <div 
             onClick={() => setIsRecording(!isRecording)}
             style={{
-                backgroundColor: commonStyles.purple,
+                backgroundColor: isRecording?commonStyles.faded_purple:commonStyles.purple,
                 borderRadius: "15px",
                 padding: "15px 20px",
                 display: "flex",
@@ -28,7 +28,7 @@ export default function ActionBtn(){
                 alignItems: "center",
                 cursor: "pointer",
                 gap: "5px",
-                minHeight: "50px",
+                height: isRecording?"12px":"25px",
             }}
         >
             {isRecording ? (
@@ -36,7 +36,7 @@ export default function ActionBtn(){
                     display: "flex",
                     alignItems: "center",
                     gap: "3px",
-                    height: "40px",
+                    height: "25px",
                 }}>
                     {waveHeights.map((height, index) => (
                         <div

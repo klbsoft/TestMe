@@ -30,8 +30,8 @@ function Header() {
   width: "100%",
   flexShrink: 0,
   backgroundColor: commonStyles.purple,
-  display: "flex",
-  // display:"none",
+  // display: "flex",
+  display:"none",
   alignItems: "center",
   justifyContent: "space-between",
   height: "60px", // Slightly taller for better proportions

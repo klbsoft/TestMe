@@ -2,7 +2,11 @@ import { defaultSetting, commonStyles } from "../../components/theme/default";
 import { useState, useEffect } from "react";
 import ProgressBar from "./ProgressBar";
 
-export default function Image(){
+interface ImageProps {
+  windowHeight: number;
+}
+
+export default function Image({ windowHeight }: ImageProps){
     const [windowWidth, setWindowWidth] = useState(window.innerWidth);
     const [isBlurred, setIsBlurred] = useState(true);
 
@@ -12,30 +16,39 @@ export default function Image(){
         return () => window.removeEventListener('resize', handleResize);
     }, []);
 
-    const isDesktop = windowWidth > 400;
+    const isDesktop = windowWidth > 800;
+    
+    // Calculate max size based on viewport height
+    const maxImageSize = Math.min(
+        isDesktop ? 600 : 400,
+        windowHeight * 0.6 // 60% of viewport height
+    );
 
     return (
         <div style={{
             width: "100%",
             display: "flex",
-            justifyContent: isDesktop ? "flex-end" : "center",
-            paddingRight: isDesktop ? "20%" : "0",
+            justifyContent: "center",
+            alignItems: "center",
         }}
-        onClick={()=>{
-            setIsBlurred(isBlurred?false:true);
+        onClick={() => {
+            setIsBlurred(isBlurred ? false : true);
         }}
         >
             <div style={{
-                width: "80%",
-                maxWidth: "600px",
+                width: "100%",
+                maxWidth: maxImageSize,
                 display: "flex",
                 flexDirection: "column",
                 gap: "10px",
+                alignItems: "center",
             }}>
                 <img 
                     src={`${defaultSetting.base_bank}0.jpg`}
                     style={{
-                        width: "80%",
+                        width: "100%",
+                        maxWidth: maxImageSize,
+                        maxHeight: maxImageSize,
                         aspectRatio: "1 / 1",
                         objectFit: "cover",
                         border: `solid 2px ${commonStyles.white}`,
@@ -47,21 +60,6 @@ export default function Image(){
                         MozTransition: "filter 0.5s ease-in-out",
                     }}
                 />
-                {/* <button
-                    onClick={() => setIsBlurred(!isBlurred)}
-                    style={{
-                        padding: "10px 20px",
-                        backgroundColor: commonStyles.purple,
-                        color: commonStyles.white,
-                        border: "none",
-                        borderRadius: "10px",
-                        cursor: "pointer",
-                        fontSize: commonStyles.button_fontSize,
-                        fontWeight: commonStyles.button_fontWeight,
-                    }}
-                >
-                    {isBlurred ? "Show Image" : "Hide Image"}
-                </button> */}
                 <ProgressBar/>
             </div>
         </div>
