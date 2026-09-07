@@ -4,6 +4,8 @@ import { useView } from "../../context/ViewContext";
 import Searcher from "../searcher/Searcher"
 import "../../animation.css"
 import DescribeTheImage from "../describe/Describe";
+import Login from "../login/Login";
+import Management from "../manager/Manager";
  
 
 
@@ -87,7 +89,9 @@ export default function Home() {
       </div>
       
       */}
-      <DescribeTheImage/>
+      {/* <DescribeTheImage/> */}
+      {/* <Login/> */}
+      <Management/>
     </>
   );
 }

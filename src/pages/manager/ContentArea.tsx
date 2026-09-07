@@ -1,12 +1,10 @@
 import { useState } from "react";
 import { commonStyles } from "../../components/theme/default";
-import Header from "./Header";
-import NavigationBar from "./NavigationBar";
 import Assignments from "./Assignments";
 import Grades from "./Grades";
 import Groups from "./Groups";
 
-export default function Management() {
+export default function ContentArea() {
   const [activeSection, setActiveSection] = useState<string>("Assignments");
 
   const renderSection = () => {
@@ -23,18 +21,14 @@ export default function Management() {
   };
 
   return (
-    <div style={{ fontFamily: "Arial, sans-serif" }}>
-      <Header />
-      <NavigationBar onSectionChange={setActiveSection} />
-      <div
-        style={{
-          minHeight: "calc(100vh - 120px)",
-          background: commonStyles.white,
-          padding: "30px",
-        }}
-      >
-        {renderSection()}
-      </div>
+    <div
+      style={{
+        minHeight: "calc(100vh - 120px)",
+        background: commonStyles.white,
+        padding: "30px",
+      }}
+    >
+      {renderSection()}
     </div>
   );
 }

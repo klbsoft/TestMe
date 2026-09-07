@@ -11,7 +11,7 @@ export default function ActionBtn(){
         if (isRecording) {
             const interval = setInterval(() => {
                 setWaveHeights(prev => 
-                    prev.map(() => Math.floor(Math.random() * 40) + 5)
+                    prev.map(() => Math.floor(Math.random() * 10) + 2)
                 );
             }, 100);
             return () => clearInterval(interval);
@@ -22,15 +22,16 @@ export default function ActionBtn(){
         <div 
             onClick={() => setIsRecording(!isRecording)}
             style={{
-                backgroundColor: commonStyles.purple,
+                backgroundColor: isRecording ? commonStyles.faded_purple : commonStyles.purple,
                 borderRadius: "15px",
-                padding: "15px 20px",
+                padding: isRecording ? "5px 20px" : "15px 20px",
                 display: "flex",
                 justifyContent: "center",
                 alignItems: "center",
                 cursor: "pointer",
                 gap: "5px",
-                minHeight: "50px",
+                minHeight: isRecording ? "12px" : "50px",
+                boxSizing: "border-box",
             }}
         >
             {isRecording ? (
@@ -38,7 +39,7 @@ export default function ActionBtn(){
                     display: "flex",
                     alignItems: "center",
                     gap: "3px",
-                    height: "40px",
+                    height: "10px",
                 }}>
                     {waveHeights.map((height, index) => (
                         <div
@@ -46,6 +47,7 @@ export default function ActionBtn(){
                             style={{
                                 width: "4px",
                                 height: `${height}px`,
+                                maxHeight: "10px",
                                 backgroundColor: commonStyles.white,
                                 borderRadius: "2px",
                                 transition: "height 0.15s ease-in-out",
@@ -106,14 +108,18 @@ export default function DescribeTheImage() {
   const [isRecording, setIsRecording] = useState(false);
   const [recordedAudio, setRecordedAudio] = useState<string | null>(null);
   const [windowWidth, setWindowWidth] = useState(window.innerWidth);
+  const [windowHeight, setWindowHeight] = useState(window.innerHeight);
 
   useEffect(() => {
-    const handleResize = () => setWindowWidth(window.innerWidth);
+    const handleResize = () => {
+      setWindowWidth(window.innerWidth);
+      setWindowHeight(window.innerHeight);
+    };
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  const isDesktop = windowWidth > 400;
+  const isDesktop = windowWidth > 800;
 
   return (
     <div style={{
@@ -121,19 +127,21 @@ export default function DescribeTheImage() {
       height: "100%",
       display: "flex",
       flexDirection: isDesktop ? "row" : "column",
-      alignItems: isDesktop ? "flex-start" : "center",
+      alignItems: "center",
+      justifyContent: "center",
       overflowY: "auto",
       padding: "20px",
       boxSizing: "border-box",
-      gap: "20px",
+      gap: "40px",
     }}>
       {/* Left side - Avatar and ActionBtn */}
       <div style={{
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
-        width: isDesktop ? "40%" : "100%",
+        width: isDesktop ? "auto" : "100%",
         order: isDesktop ? 1 : 2,
+        flexShrink: 0,
       }}>
         <Avatar/>
         <ActionBtn/>
@@ -141,10 +149,12 @@ export default function DescribeTheImage() {
 
       {/* Right side - Image */}
       <div style={{
-        width: isDesktop ? "60%" : "100%",
+        width: isDesktop ? "auto" : "100%",
         order: isDesktop ? 2 : 1,
+        flexShrink: 1,
+        minWidth: 0,
       }}>
-        <Image/>
+        <Image windowHeight={windowHeight} />
       </div>
     </div>
   );
@@ -157,7 +167,11 @@ import { defaultSetting, commonStyles } from "../../components/theme/default";
 import { useState, useEffect } from "react";
 import ProgressBar from "./ProgressBar";
 
-export default function Image(){
+interface ImageProps {
+  windowHeight: number;
+}
+
+export default function Image({ windowHeight }: ImageProps){
     const [windowWidth, setWindowWidth] = useState(window.innerWidth);
     const [isBlurred, setIsBlurred] = useState(true);
 
@@ -167,30 +181,39 @@ export default function Image(){
         return () => window.removeEventListener('resize', handleResize);
     }, []);
 
-    const isDesktop = windowWidth > 400;
+    const isDesktop = windowWidth > 800;
+    
+    // Calculate max size based on viewport height
+    const maxImageSize = Math.min(
+        isDesktop ? 600 : 400,
+        windowHeight * 0.6 // 60% of viewport height
+    );
 
     return (
         <div style={{
             width: "100%",
             display: "flex",
-            justifyContent: isDesktop ? "flex-end" : "center",
-            paddingRight: isDesktop ? "20%" : "0",
+            justifyContent: "center",
+            alignItems: "center",
         }}
-        onClick={()=>{
-            setIsBlurred(isBlurred?false:true);
+        onClick={() => {
+            setIsBlurred(isBlurred ? false : true);
         }}
         >
             <div style={{
-                width: "80%",
-                maxWidth: "600px",
+                width: "100%",
+                maxWidth: maxImageSize,
                 display: "flex",
                 flexDirection: "column",
                 gap: "10px",
+                alignItems: "center",
             }}>
                 <img 
                     src={`${defaultSetting.base_bank}0.jpg`}
                     style={{
-                        width: "80%",
+                        width: "100%",
+                        maxWidth: maxImageSize,
+                        maxHeight: maxImageSize,
                         aspectRatio: "1 / 1",
                         objectFit: "cover",
                         border: `solid 2px ${commonStyles.white}`,
@@ -202,21 +225,6 @@ export default function Image(){
                         MozTransition: "filter 0.5s ease-in-out",
                     }}
                 />
-                {/* <button
-                    onClick={() => setIsBlurred(!isBlurred)}
-                    style={{
-                        padding: "10px 20px",
-                        backgroundColor: commonStyles.purple,
-                        color: commonStyles.white,
-                        border: "none",
-                        borderRadius: "10px",
-                        cursor: "pointer",
-                        fontSize: commonStyles.button_fontSize,
-                        fontWeight: commonStyles.button_fontWeight,
-                    }}
-                >
-                    {isBlurred ? "Show Image" : "Hide Image"}
-                </button> */}
                 <ProgressBar/>
             </div>
         </div>
@@ -226,25 +234,60 @@ export default function Image(){
 
 ## file number: 5
 ## starting ./Message.tsx ##
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { commonStyles } from "../../components/theme/default";
 
 export default function Message(){
-    const [timeLeft, setTimeLeft] = useState(60); // Example: 60 seconds
-    const totalTime = 20; // Total time for the countdown
+    const [timeLeft, setTimeLeft] = useState(60);
+    const [windowWidth, setWindowWidth] = useState(window.innerWidth);
+    const [windowHeight, setWindowHeight] = useState(window.innerHeight);
+    const [showScrollIndicator, setShowScrollIndicator] = useState(false);
+    const contentRef = useRef<HTMLDivElement>(null);
+    const totalTime = 20;
+    const percentage = 5;
 
-    const percentage = 5; //(timeLeft / totalTime) * 100;
+    const isDesktop = windowWidth > 800;
+    
+    const maxContentHeight = isDesktop 
+        ? Math.min(windowHeight * 0.4, 300)
+        : 55;// 80 default
+
+    useEffect(() => {
+        const handleResize = () => {
+            setWindowWidth(window.innerWidth);
+            setWindowHeight(window.innerHeight);
+        };
+        window.addEventListener('resize', handleResize);
+        return () => window.removeEventListener('resize', handleResize);
+    }, []);
+
+    useEffect(() => {
+        const element = contentRef.current;
+        if (element) {
+            const hasOverflow = element.scrollHeight > element.clientHeight;
+            setShowScrollIndicator(hasOverflow);
+        }
+    }, [maxContentHeight]);
+
+    const handleScroll = () => {
+        const element = contentRef.current;
+        if (element) {
+            const isAtBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 5;
+            const hasOverflow = element.scrollHeight > element.clientHeight;
+            setShowScrollIndicator(hasOverflow && !isAtBottom);
+        }
+    };
 
     return (
         <div style={{
             position: "relative",
             backgroundColor: commonStyles.purple,
             borderRadius: "15px",
-            padding: "15px 20px",
+            padding: "12px 15px",
             maxWidth: "350px",
             display: "flex",
             alignItems: "center",
-            gap: "15px",
+            gap: "10px",
         }}>
             {/* Triangle spike */}
             <div style={{
@@ -259,19 +302,65 @@ export default function Message(){
                 borderTop: `10px solid ${commonStyles.purple}`,
             }} />
             
-            <label style={{
-                color: commonStyles.white,
-                fontSize: commonStyles.button_fontSize,
-                fontWeight: commonStyles.button_fontWeight,
-                flex: 1,
-            }}>
-                For now the bot is just saying something              
-            </label>
+            {/* Content area */}
+            <div 
+                ref={contentRef}
+                onScroll={handleScroll}
+                style={{
+                    flex: 1,
+                    minWidth: 0,
+                    maxHeight: maxContentHeight,
+                    overflowY: "auto",
+                    paddingRight: "5px",
+                    position: "relative",
+                    paddingBottom: "10px",
+                }}
+            >
+                <label style={{
+                    color: commonStyles.white,
+                    fontSize: commonStyles.button_fontSize,
+                    fontWeight: "bold",
+                    display: "block",
+                    marginBottom: "5px",
+                }}>
+                    Helpful sentences
+                </label>
+                <ul style={{
+                    color: commonStyles.white,
+                    fontSize: "12px",
+                    margin: 0,
+                    paddingLeft: "15px",
+                    lineHeight: "1.4",
+                }}>
+                    <li>The amazing view of the picture is stunning</li>
+                    <li>I can see a beautiful landscape with vibrant colors</li>
+                    <li>In the foreground, there appears to be an interesting subject</li>
+                    <li>The lighting creates a warm and inviting atmosphere</li>
+                </ul>
+            </div>
+
+            {/* Scroll indicator arrow - only when content overflows */}
+            {showScrollIndicator && (
+                <div style={{
+                    position: "absolute",
+                    right: "10px",
+                    bottom: "15px",
+                    pointerEvents: "none",
+                }}>
+                    <span style={{
+                        color: commonStyles.white,
+                        fontSize: "12px",
+                        opacity: 0.8,
+                    }}>
+                        ▼
+                    </span>
+                </div>
+            )}
 
             {/* Timer circle */}
             <div style={{
-                width: "50px",
-                height: "50px",
+                width: "40px",
+                height: "40px",
                 borderRadius: "50%",
                 background: `conic-gradient(${commonStyles.faded_purple} ${percentage}%, ${commonStyles.white} ${percentage}%)`,
                 display: "flex",
@@ -280,10 +369,9 @@ export default function Message(){
                 position: "relative",
                 flexShrink: 0,
             }}>
-                {/* Inner circle */}
                 <div style={{
-                    width: "40px",
-                    height: "40px",
+                    width: "32px",
+                    height: "32px",
                     borderRadius: "50%",
                     backgroundColor: commonStyles.purple,
                     display: "flex",
@@ -292,7 +380,7 @@ export default function Message(){
                 }}>
                     <span style={{
                         color: commonStyles.white,
-                        fontSize: "14px",
+                        fontSize: "12px",
                         fontWeight: "bold",
                     }}>
                         {timeLeft}
@@ -387,4 +475,34 @@ export default function ProgressBar(){
     )
 }
 ## ending of file ./ProgressBar.tsx ##
+
+## file number: 7
+## starting ./tools.tsx ##
+import { useState, useEffect } from "react";
+
+export default function ScreenSizeTracker() {
+  const [windowSize, setWindowSize] = useState({
+    width: window.innerWidth,
+    height: window.innerHeight,
+  });
+
+  useEffect(() => {
+    const handleResize = () => {
+      setWindowSize({
+        width: window.innerWidth,
+        height: window.innerHeight,
+      });
+      document.title = `${window.innerWidth}x${window.innerHeight}`;
+    };
+
+    // Set initial title
+    document.title = `${windowSize.width}x${windowSize.height}`;
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  return null;
+}
+## ending of file ./tools.tsx ##
 

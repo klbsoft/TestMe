@@ -1,32 +1,26 @@
 import Container from "./components/container/Container";
 import { ViewProvider } from "./context/ViewContext";
-import Home from "./pages/home/Home";
 import "./animation.css"
+import { commonStyles } from "./components/theme/default";
+
 export default function App() {
   return (
     <div 
       className="page-transition"
       style={{ 
-      width: "100%",
-      margin: "0%",
-      padding: "0%",
-      height: "98dvh",//"100vh",
-      display: "flex",
-      flexDirection: "column",
-      backgroundColor: "#ffffff",
-      boxShadow: "0 0 20px rgba(0,0,0,0.05)",
-      overflow: "hidden",
-      // border:"solid black",
-      
-      // maxWidth: "480px",
-      // width: "100%",
-      // margin: "0 auto",
-      // minHeight: "100vh",
-      // position: "relative",
-      // backgroundColor: "#FFFFFF",
-      // boxShadow: "0 0 20px rgba(0,0,0,0.05)",
-      // border:"solid black"
-    }}>
+        width: "100%",
+        height: "98dvh",
+        margin: "0",
+        padding: "0",
+        display: "flex",
+        flexDirection: "column",
+        backgroundColor: "#ffffff",
+        overflow: "hidden",
+        boxSizing: "border-box",
+        border: `solid 2px ${commonStyles.purple}`,
+        borderRadius: "22px",
+      }}
+    >
       <ViewProvider>
         <Container />
       </ViewProvider>

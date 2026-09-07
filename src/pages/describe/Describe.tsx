@@ -32,8 +32,8 @@ export default function DescribeTheImage() {
       overflowY: "auto",
       padding: "20px",
       boxSizing: "border-box",
-      gap: "40px",
-    }}>
+      gap: isDesktop ? "40px" : "5px",    }} // default 40px
+>
       {/* Left side - Avatar and ActionBtn */}
       <div style={{
         display: "flex",

@@ -1,234 +1,210 @@
 import { useState } from "react";
-import { commonStyles } from "../../components/theme/default";
+import { commonStyles, defaultSetting } from "../../components/theme/default";
 import { useAuth } from "../../context/AuthContext";
-import { API_LOGIN, API_SESSION } from "../../constants/config";
-// import type { UserSession } from "../../session/UserSession";
-// import { useUserSession } from "../../context/UserSessionContext";
-import "../../animation.css"
-function Login({ onSwitchToSignup }: { onSwitchToSignup: () => void }) {  const { login } = useAuth();
-  const [email, setPhone] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
-  // const {setSession} = useUserSession(); 
- 
 
-  const handleLogin = async() => {
-    if (!email || !password) {
-      setError("Todos los campos son requeridos");
+function Login() {
+  const { login } = useAuth();
+  const [code, setCode] = useState("");
+  const [password, setPassword] = useState("");
+  const [group, setGroup] = useState("");
+  const [error, setError] = useState("");
+
+  const handleLogin = async () => {
+    if (!code || !password || !group) {
+      setError("All fields are required");
       return;
     }
 
-    // Mock login - replace with API call
-    console.log("Login:", { email, password });
-
-  if (!email || !password) {
-    setError("Todos los campos son requeridos");
-    return;
-  }
-
-    try {
-     
-      let response = await fetch(API_LOGIN ,{
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email:email, password:password }),
-      });
-
-      if (!response.ok) {
-        throw new Error("Error al iniciar sesión");
-      }
-      let text = await response.text();
-      const split = text.split(':');
-      const result = split[0];
-      const info = split[1];  
-      console.log(text);  
-      if (result === "OK"){
-          response = await fetch(API_SESSION, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ user_id:info}),
-          });
-          text = await response.text();
-          // const parsed: UserSession = await JSON.parse(text);
-          
-          // console.log(parsed);
-          // setSession(parsed)
-          login();
-          return; 
-      }
-     alert(`No se pudo iniciar la sesión: ${info}`)
-      // login();
-    } catch {
-      alert("No se pudo verificar el usuario o contraseña. Intente de nuevo.");
-    }
+    console.log("Login:", { code, password, group });
     
-    // Simulate successful login
-    // login();
+    // Mock login for now
+    login();
   };
 
   const inputStyle: React.CSSProperties = {
-    borderRadius: "20px",
+    borderRadius: "15px",
     padding: "12px 16px",
-    border: `2px solid ${commonStyles.green}`,
-    backgroundColor: "#FFFFFF",
-    color: commonStyles.blue,
+    border: `2px solid ${commonStyles.purple}`,
+    backgroundColor: commonStyles.white,
+    color: commonStyles.purple,
     width: "100%",
     outline: "none",
-    fontSize: commonStyles.text_font_size,
+    fontSize: commonStyles.button_fontSize,
+    fontWeight: commonStyles.button_fontWeight,
     boxSizing: "border-box",
+    textAlign: "center",
   };
 
   const labelStyle: React.CSSProperties = {
-    fontSize: "13px",
-    fontWeight: "600",
-    color: commonStyles.blue,
+    fontSize: commonStyles.button_fontSize,
+    fontWeight: commonStyles.button_fontWeight,
+    color: commonStyles.white,
     marginBottom: "6px",
-    opacity: 0.7,
+    opacity: 0.8,
+    textAlign: "center",
   };
 
   return (
     <div
-     className="page-transition"
+      className="page-transition"
       style={{
-        padding: "16px",
+        width: "100%",
+        height: "100%",
         display: "flex",
-        flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
-        minHeight: "100%",
       }}
     >
-            {/* Logo / App Name */}
-<div
-  style={{
-    width: "140px",
-    height: "140px",
-    borderRadius: "50%",
-    backgroundColor: commonStyles.blue,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: "24px",
-  }}
->
-  <img 
-    src="/opti-via/img/logo_no_back.png" 
-    alt="Opti-Vía" 
-    style={{
-      width: "130px",
-      height: "130px",
-      borderRadius: "50%",
-      objectFit: "contain",
-    }}
-  />
-</div>
-      <p
-        style={{
-          marginTop: "16px",
-          color: commonStyles.blue,
-          textAlign: "center",
-          fontSize: commonStyles.text_font_size,
-        }}
-      >
-        Iniciar sesión
-      </p>
-
+      {/* Centered card */}
       <div
         style={{
-          width: "80%",
+          width: "40%",
+          minWidth: "280px",
+          maxWidth: "400px",
+          backgroundColor: commonStyles.purple,
+          borderRadius: "25px",
+          padding: "30px 20px",
           display: "flex",
           flexDirection: "column",
-          gap: "16px",
-          marginTop: "24px",
+          alignItems: "center",
+          boxShadow: "0 4px 12px rgba(0, 0, 0, 0.2)",
         }}
       >
-        {/* Phone */}
-        <div>
-          <div style={labelStyle}>Correo electrónico </div>
-          <input
-            type="email"
-            maxLength={100}
-            style={inputStyle}
-            value={email}
-            onChange={(e) => {
-              setPhone(e.target.value);
-              setError("");
-            }}
-            placeholder="correo@ejemplo.com"
-          />
-        </div>
-
-        {/* Password */}
-        <div>
-          <div style={labelStyle}>Contraseña</div>
-          <input
-            type="password"
-            maxLength={10}
-            style={inputStyle}
-            value={password}
-            onChange={(e) => {
-              setPassword(e.target.value);
-              setError("");
-            }}
-            placeholder="Tu contraseña"
-          />
-        </div>
-
-        {/* Error Message */}
-        {error && (
-          <p
+        {/* Logo / App Name */}
+        <div
+          style={{
+            width: "100px",
+            height: "100px",
+            borderRadius: "50%",
+            backgroundColor: commonStyles.white,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            marginBottom: "20px",
+          }}
+        >
+          <img
+            src={`${defaultSetting.base_bot}bot.svg`}
+            alt="TestMe"
             style={{
-              color: "#ff4444",
-              fontSize: "12px",
-              textAlign: "center",
+              width: "90px",
+              height: "90px",
+              borderRadius: "50%",
+              objectFit: "contain",
+            }}
+          />
+        </div>
+
+        <p
+          style={{
+            color: commonStyles.white,
+            textAlign: "center",
+            fontSize: commonStyles.button_fontSize,
+            fontWeight: commonStyles.button_fontWeight,
+            marginBottom: "20px",
+          }}
+        >
+          <label>Welcome to <strong>TestMe</strong></label>
+        </p>
+
+        <div
+          style={{
+            width: "100%",
+            display: "flex",
+            flexDirection: "column",
+            gap: "16px",
+            alignItems: "center",
+          }}
+        >
+          <label style={{color:commonStyles.white}}>Please enter your information</label>
+          {/* Code */}
+          <div style={{ width: "100%" }}>
+            {/* <div style={labelStyle}>Code</div> */}
+            <input
+              type="text"
+              maxLength={2}
+              style={inputStyle}
+              value={code}
+              onChange={(e) => {
+                setCode(e.target.value);
+                setError("");
+              }}
+              placeholder="Code"
+            />
+          </div>
+
+          {/* Password */}
+          <div style={{ width: "100%" }}>
+            {/* <div style={labelStyle}>Password</div> */}
+            <input
+              type="password"
+              maxLength={10}
+              style={inputStyle}
+              value={password}
+              onChange={(e) => {
+                setPassword(e.target.value);
+                setError("");
+              }}
+              placeholder="Password"
+            />
+          </div>
+
+          {/* Group */}
+          {/* <div style={{ width: "100%" }}>
+            <select
+              style={inputStyle}
+              value={group}
+              onChange={(e) => {
+                setGroup(e.target.value);
+                setError("");
+              }}
+            >
+              <option value="">Group</option>
+              <option value="Group 1">Group 1</option>
+              <option value="Group 4">Group 4</option>
+              <option value="Group 7">Group 7</option>
+            </select>
+          </div> */}
+
+          {/* Error Message */}
+          {error && (
+            <p
+              style={{
+                color: commonStyles.white,
+                fontSize: commonStyles.button_fontSize,
+                fontWeight: commonStyles.button_fontWeight,
+                textAlign: "center",
+                backgroundColor: commonStyles.faded_purple,
+                borderRadius: "10px",
+                padding: "8px",
+                width: "100%",
+              }}
+            >
+              {error}
+            </p>
+          )}
+        </div>
+
+        {code && password && (
+          <button
+            onClick={handleLogin}
+            style={{
+              backgroundColor: commonStyles.white,
+              border: "none",
+              width: "100%",
+              borderRadius: "15px",
+              padding: "12px",
+              color: commonStyles.purple,
+              marginTop: "20px",
+              fontSize: commonStyles.button_fontSize,
+              fontWeight: commonStyles.button_fontWeight,
+              cursor: "pointer",
             }}
           >
-            {error}
-          </p>
+            Enter
+          </button>
         )}
       </div>
-
-      {/* Login Button */}
-      <button
-        onClick={handleLogin}
-        disabled={!email || !password}
-        style={{
-          backgroundColor: email && password ? commonStyles.blue : "#CCCCCC",
-          border: "none",
-          width: "80%",
-          borderRadius: "20px",
-          padding: "12px",
-          color: "white",
-          marginTop: "24px",
-          fontSize: commonStyles.button_fontSize,
-          fontWeight: commonStyles.button_fontWeight,
-          cursor: email && password ? "pointer" : "not-allowed",
-        }}
-      >
-        Entrar
-      </button>
-
-      {/* Link to Sign Up */}
-      <p
-        style={{
-          marginTop: "16px",
-          color: commonStyles.blue,
-          fontSize: "14px",
-          opacity: 0.7,
-        }}
-      >
-        ¿No tienes cuenta?{" "}
-        <span
-          style={{
-            color: commonStyles.green,
-            fontWeight: "600",
-            cursor: "pointer",
-          }}
-          onClick={onSwitchToSignup}
-        >
-          Crear una
-        </span>
-      </p>
     </div>
   );
 }
