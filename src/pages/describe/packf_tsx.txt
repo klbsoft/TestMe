@@ -132,8 +132,8 @@ export default function DescribeTheImage() {
       overflowY: "auto",
       padding: "20px",
       boxSizing: "border-box",
-      gap: "40px",
-    }}>
+      gap: isDesktop ? "40px" : "5px",    }} // default 40px
+>
       {/* Left side - Avatar and ActionBtn */}
       <div style={{
         display: "flex",
@@ -327,7 +327,8 @@ export default function Message(){
                 </label>
                 <ul style={{
                     color: commonStyles.white,
-                    fontSize: "12px",
+                    fontWeight: commonStyles.button_fontWeight,
+                    fontSize: commonStyles.button_fontSize,
                     margin: 0,
                     paddingLeft: "15px",
                     lineHeight: "1.4",
@@ -335,7 +336,6 @@ export default function Message(){
                     <li>The amazing view of the picture is stunning</li>
                     <li>I can see a beautiful landscape with vibrant colors</li>
                     <li>In the foreground, there appears to be an interesting subject</li>
-                    <li>The lighting creates a warm and inviting atmosphere</li>
                 </ul>
             </div>
 

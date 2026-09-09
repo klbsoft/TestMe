@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { commonStyles } from "../../components/theme/default";
+import { commonStyles, defaultSetting } from "../../components/theme/default";
 
 type AssignmentType = "speaking" | "listening" | "writing";
 
@@ -8,10 +8,19 @@ interface DayAssignment {
   types: AssignmentType[];
 }
 
-const assignmentIcons: Record<AssignmentType, string> = {
-  speaking: "🎤",
-  listening: "🔊",
-  writing: "📝",
+const assignmentIcons: Record<AssignmentType, { normal: string; white: string }> = {
+  speaking: {
+    normal: `${defaultSetting.base_icons}x_speaking.png`,
+    white: `${defaultSetting.base_icons}white_speaking.png`,
+  },
+  listening: {
+    normal: `${defaultSetting.base_icons}x_listening.png`,
+    white: `${defaultSetting.base_icons}white_listening.png`,
+  },
+  writing: {
+    normal: `${defaultSetting.base_icons}x_writing.png`,
+    white: `${defaultSetting.base_icons}white_writing.png`,
+  },
 };
 
 export default function Calendar() {
@@ -20,8 +29,6 @@ export default function Calendar() {
   const [assignments, setAssignments] = useState<DayAssignment[]>([]);
 
   const today = new Date();
-  const tomorrow = new Date(today);
-  tomorrow.setDate(today.getDate() + 1);
 
   const year = currentMonth.getFullYear();
   const month = currentMonth.getMonth();
@@ -56,14 +63,11 @@ export default function Calendar() {
     setSelectedDate(date);
   };
 
-  const isTomorrow = (day: number) => {
-    return day === tomorrow.getDate() && month === tomorrow.getMonth() && year === tomorrow.getFullYear();
-  };
-
-  const isPastDay = (day: number) => {
-    const date = new Date(year, month, day);
-    return date < tomorrow;
-  };
+ const isPastDay = (day: number) => {
+  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const date = new Date(year, month, day);
+  return date < todayStart;
+};
 
   const days = [];
   for (let i = 0; i < firstDayOfMonth; i++) {
@@ -75,7 +79,8 @@ export default function Calendar() {
 
   return (
     <div style={{
-      maxWidth: "400px",
+      width: "100%",
+      maxWidth: "700px",
       margin: "0 auto",
       backgroundColor: commonStyles.white,
       borderRadius: "15px",
@@ -167,7 +172,8 @@ export default function Calendar() {
                 disabled={isPast}
                 style={{
                   width: "100%",
-                  aspectRatio: "1",
+                  aspectRatio: "1.5",
+                  minHeight: "50px",
                   border: `2px solid ${commonStyles.faded_purple}`,
                   borderRadius: "8px",
                   backgroundColor: isSelected ? commonStyles.purple : commonStyles.white,
@@ -180,14 +186,14 @@ export default function Calendar() {
                   alignItems: hasAssignments ? "flex-start" : "center",
                   justifyContent: hasAssignments ? "space-between" : "center",
                   position: "relative",
-                  padding: "3px",
+                  padding: "5px",
                   flexWrap: "wrap",
                 }}
               >
                 <span style={{
                   position: hasAssignments ? "absolute" : "static",
-                  top: "2px",
-                  left: "2px",
+                  top: "3px",
+                  left: "3px",
                 }}>
                   {day}
                 </span>
@@ -195,18 +201,22 @@ export default function Calendar() {
                 {hasAssignments && (
                   <div style={{
                     display: "flex",
-                    gap: "1px",
+                    gap: "2px",
                     position: "absolute",
-                    bottom: "2px",
-                    left: "2px",
+                    bottom: "3px",
+                    left: "3px",
                   }}>
-                    {assignmentTypes.map((type, i) => (
-                      <span key={type} style={{
-                        fontSize: "8px",
-                        color: isSelected ? commonStyles.white : commonStyles.purple,
-                      }}>
-                        {assignmentIcons[type]}
-                      </span>
+                    {assignmentTypes.map((type) => (
+                      <img
+                        key={type}
+                        src={isSelected ? assignmentIcons[type].white : assignmentIcons[type].normal}
+                        alt={type}
+                        style={{
+                          width: "16px",
+                          height: "16px",
+                          cursor: "pointer",
+                        }}
+                      />
                     ))}
                   </div>
                 )}
@@ -270,14 +280,20 @@ export default function Calendar() {
                       borderRadius: "50%",
                       border: `2px solid ${commonStyles.faded_purple}`,
                       backgroundColor: isActive ? commonStyles.purple : commonStyles.white,
-                      fontSize: "24px",
                       cursor: "pointer",
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
                     }}
                   >
-                    {assignmentIcons[type]}
+                    <img
+                      src={isActive ? assignmentIcons[type].white : assignmentIcons[type].normal}
+                      alt={type}
+                      style={{
+                        width: "22px",
+                        height: "22px",
+                      }}
+                    />
                   </button>
                 );
               })}

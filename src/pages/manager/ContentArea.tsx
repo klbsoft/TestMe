@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { commonStyles } from "../../components/theme/default";
-import Assignments from "./Assignments";
+import Assignments from "./Schedule";
 import Grades from "./Grades";
 import Groups from "./Groups";
 

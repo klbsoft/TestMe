@@ -1,0 +1,902 @@
+## file number: 1
+## starting ./Assignments.tsx ##
+import { useState } from "react";
+import { commonStyles } from "../../components/theme/default";
+import Calendar from "./Calendar";
+
+export default function Assignments() {
+  const [selectedGroup, setSelectedGroup] = useState("");
+  const [showDropdown, setShowDropdown] = useState(false);
+
+  const groups = ["Group A", "Group B", "Group C"];
+  const availableGroups = groups.filter(group => group !== selectedGroup);
+
+  return (
+    <div>
+      <h2 style={{ 
+        color: commonStyles.purple, 
+        fontSize: commonStyles.button_fontSize,
+        fontWeight: commonStyles.button_fontWeight,
+        marginBottom: "20px",
+      }}>
+        <strong>Create</strong>
+      </h2>
+
+      <div style={{
+        display: "flex",
+        gap: "20px",
+        alignItems: "flex-start",
+      }}>
+        {/* Dropdown section */}
+        <div style={{
+          width: "200px",
+          position: "relative",
+          flexShrink: 0,
+        }}>
+          <div
+            onClick={() => setShowDropdown(!showDropdown)}
+            style={{
+              width: "100%",
+              borderRadius: "15px",
+              padding: "12px 16px",
+              border: `2px solid ${commonStyles.faded_purple}`,
+              backgroundColor: commonStyles.white,
+              color: selectedGroup ? commonStyles.purple : commonStyles.faded_purple,
+              fontSize: commonStyles.button_fontSize,
+              fontWeight: commonStyles.button_fontWeight,
+              cursor: "pointer",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              boxSizing: "border-box",
+            }}
+          >
+            <span>{selectedGroup || "Groups"}</span>
+            <span style={{ 
+              color: commonStyles.purple,
+              transform: showDropdown ? "rotate(180deg)" : "rotate(0deg)",
+              transition: "transform 0.2s ease",
+            }}>
+              ▼
+            </span>
+          </div>
+
+          {showDropdown && (
+            <>
+              <div
+                onClick={() => setShowDropdown(false)}
+                style={{
+                  position: "fixed",
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  zIndex: 9998,
+                }}
+              />
+              <div style={{
+                position: "absolute",
+                top: "100%",
+                left: 0,
+                right: 0,
+                backgroundColor: commonStyles.white,
+                border: `2px solid ${commonStyles.faded_purple}`,
+                borderRadius: "0 0 15px 15px",
+                marginTop: "4px",
+                zIndex: 9999,
+                overflow: "hidden",
+              }}>
+                {availableGroups.map((group, index) => (
+                  <div
+                    key={group}
+                    onClick={() => {
+                      setSelectedGroup(group);
+                      setShowDropdown(false);
+                    }}
+                    style={{
+                      padding: "12px 16px",
+                      color: commonStyles.purple,
+                      fontSize: commonStyles.button_fontSize,
+                      fontWeight: commonStyles.button_fontWeight,
+                      cursor: "pointer",
+                      borderBottom: index < availableGroups.length - 1 
+                        ? `1px solid ${commonStyles.faded_purple}` 
+                        : "none",
+                      transition: "background 0.15s ease",
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = commonStyles.faded_purple;
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = "transparent";
+                    }}
+                  >
+                    {group}
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Calendar section */}
+        <div style={{
+          flex: 1,
+          minWidth: 0,
+        }}>
+          {selectedGroup && <Calendar />}
+        </div>
+      </div>
+    </div>
+  );
+}
+## ending of file ./Assignments.tsx ##
+
+## file number: 2
+## starting ./Calendar.tsx ##
+import { useState } from "react";
+import { commonStyles, defaultSetting } from "../../components/theme/default";
+
+type AssignmentType = "speaking" | "listening" | "writing";
+
+interface DayAssignment {
+  date: string;
+  types: AssignmentType[];
+}
+
+const assignmentIcons: Record<AssignmentType, { normal: string; white: string }> = {
+  speaking: {
+    normal: `${defaultSetting.base_icons}x_speaking.png`,
+    white: `${defaultSetting.base_icons}white_speaking.png`,
+  },
+  listening: {
+    normal: `${defaultSetting.base_icons}x_listening.png`,
+    white: `${defaultSetting.base_icons}white_listening.png`,
+  },
+  writing: {
+    normal: `${defaultSetting.base_icons}x_writing.png`,
+    white: `${defaultSetting.base_icons}white_writing.png`,
+  },
+};
+
+export default function Calendar() {
+  const [currentMonth, setCurrentMonth] = useState(new Date());
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [assignments, setAssignments] = useState<DayAssignment[]>([]);
+
+  const today = new Date();
+
+  const year = currentMonth.getFullYear();
+  const month = currentMonth.getMonth();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const firstDayOfMonth = new Date(year, month, 1).getDay();
+
+  const monthName = currentMonth.toLocaleString("en-US", { month: "long" });
+
+  const getAssignmentTypes = (date: string): AssignmentType[] => {
+    const assignment = assignments.find(a => a.date === date);
+    return assignment ? assignment.types : [];
+  };
+
+  const toggleAssignmentType = (date: string, type: AssignmentType) => {
+    setAssignments(prev => {
+      const existing = prev.find(a => a.date === date);
+      if (existing) {
+        const types = existing.types.includes(type)
+          ? existing.types.filter(t => t !== type)
+          : [...existing.types, type];
+        if (types.length === 0) {
+          return prev.filter(a => a.date !== date);
+        }
+        return prev.map(a => a.date === date ? { ...a, types } : a);
+      }
+      return [...prev, { date, types: [type] }];
+    });
+  };
+
+  const handleDayClick = (day: number) => {
+    const date = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    setSelectedDate(date);
+  };
+
+ const isPastDay = (day: number) => {
+  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const date = new Date(year, month, day);
+  return date < todayStart;
+};
+
+  const days = [];
+  for (let i = 0; i < firstDayOfMonth; i++) {
+    days.push(null);
+  }
+  for (let day = 1; day <= daysInMonth; day++) {
+    days.push(day);
+  }
+
+  return (
+    <div style={{
+      width: "100%",
+      maxWidth: "700px",
+      margin: "0 auto",
+      backgroundColor: commonStyles.white,
+      borderRadius: "15px",
+      padding: "20px",
+      boxShadow: "0 4px 8px rgba(0,0,0,0.1)",
+    }}>
+      {/* Month header */}
+      <div style={{
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        marginBottom: "20px",
+      }}>
+        <button
+          onClick={() => setCurrentMonth(new Date(year, month - 1, 1))}
+          style={{
+            background: "none",
+            border: `2px solid ${commonStyles.faded_purple}`,
+            borderRadius: "8px",
+            color: commonStyles.purple,
+            cursor: "pointer",
+            padding: "5px 10px",
+          }}
+        >
+          ←
+        </button>
+        <span style={{
+          color: commonStyles.purple,
+          fontSize: commonStyles.button_fontSize,
+          fontWeight: commonStyles.button_fontWeight,
+        }}>
+          {monthName} {year}
+        </span>
+        <button
+          onClick={() => setCurrentMonth(new Date(year, month + 1, 1))}
+          style={{
+            background: "none",
+            border: `2px solid ${commonStyles.faded_purple}`,
+            borderRadius: "8px",
+            color: commonStyles.purple,
+            cursor: "pointer",
+            padding: "5px 10px",
+          }}
+        >
+          →
+        </button>
+      </div>
+
+      {/* Day names */}
+      <div style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(7, 1fr)",
+        gap: "5px",
+        marginBottom: "10px",
+      }}>
+        {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(day => (
+          <div key={day} style={{
+            textAlign: "center",
+            color: commonStyles.faded_purple,
+            fontSize: "12px",
+            fontWeight: commonStyles.button_fontWeight,
+          }}>
+            {day}
+          </div>
+        ))}
+      </div>
+
+      {/* Calendar days */}
+      <div style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(7, 1fr)",
+        gap: "5px",
+      }}>
+        {days.map((day, index) => {
+          if (day === null) {
+            return <div key={`empty-${index}`} />;
+          }
+
+          const date = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+          const isSelected = selectedDate === date;
+          const isPast = isPastDay(day);
+          const assignmentTypes = getAssignmentTypes(date);
+          const hasAssignments = assignmentTypes.length > 0;
+
+          return (
+            <div key={day}>
+              <button
+                onClick={() => !isPast && handleDayClick(day)}
+                disabled={isPast}
+                style={{
+                  width: "100%",
+                  aspectRatio: "1.5",
+                  minHeight: "50px",
+                  border: `2px solid ${commonStyles.faded_purple}`,
+                  borderRadius: "8px",
+                  backgroundColor: isSelected ? commonStyles.purple : commonStyles.white,
+                  color: isSelected ? commonStyles.white : commonStyles.purple,
+                  cursor: isPast ? "not-allowed" : "pointer",
+                  fontSize: commonStyles.button_fontSize,
+                  fontWeight: commonStyles.button_fontWeight,
+                  opacity: isPast ? 0.4 : 1,
+                  display: "flex",
+                  alignItems: hasAssignments ? "flex-start" : "center",
+                  justifyContent: hasAssignments ? "space-between" : "center",
+                  position: "relative",
+                  padding: "5px",
+                  flexWrap: "wrap",
+                }}
+              >
+                <span style={{
+                  position: hasAssignments ? "absolute" : "static",
+                  top: "3px",
+                  left: "3px",
+                }}>
+                  {day}
+                </span>
+                
+                {hasAssignments && (
+                  <div style={{
+                    display: "flex",
+                    gap: "2px",
+                    position: "absolute",
+                    bottom: "3px",
+                    left: "3px",
+                  }}>
+                    {assignmentTypes.map((type) => (
+                      <img
+                        key={type}
+                        src={isSelected ? assignmentIcons[type].white : assignmentIcons[type].normal}
+                        alt={type}
+                        style={{
+                          width: "16px",
+                          height: "16px",
+                          cursor: "pointer",
+                        }}
+                      />
+                    ))}
+                  </div>
+                )}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Popup */}
+      {selectedDate && (
+        <>
+          <div
+            onClick={() => setSelectedDate(null)}
+            style={{
+              position: "fixed",
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              zIndex: 9998,
+            }}
+          />
+          <div style={{
+            position: "fixed",
+            top: "50%",
+            left: "50%",
+            transform: "translate(-50%, -50%)",
+            backgroundColor: commonStyles.white,
+            borderRadius: "15px",
+            padding: "20px",
+            zIndex: 9999,
+            border: `2px solid ${commonStyles.faded_purple}`,
+            minWidth: "280px",
+          }}>
+            <p style={{
+              color: commonStyles.purple,
+              fontSize: commonStyles.button_fontSize,
+              fontWeight: commonStyles.button_fontWeight,
+              textAlign: "center",
+              marginBottom: "15px",
+            }}>
+              {selectedDate}
+            </p>
+            
+            <div style={{
+              display: "flex",
+              justifyContent: "center",
+              gap: "15px",
+              marginBottom: "20px",
+            }}>
+              {(["speaking", "listening", "writing"] as AssignmentType[]).map(type => {
+                const isActive = getAssignmentTypes(selectedDate).includes(type);
+                return (
+                  <button
+                    key={type}
+                    onClick={() => toggleAssignmentType(selectedDate, type)}
+                    style={{
+                      width: "50px",
+                      height: "50px",
+                      borderRadius: "50%",
+                      border: `2px solid ${commonStyles.faded_purple}`,
+                      backgroundColor: isActive ? commonStyles.purple : commonStyles.white,
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <img
+                      src={isActive ? assignmentIcons[type].white : assignmentIcons[type].normal}
+                      alt={type}
+                      style={{
+                        width: "22px",
+                        height: "22px",
+                      }}
+                    />
+                  </button>
+                );
+              })}
+            </div>
+
+            <div style={{
+              display: "flex",
+              justifyContent: "space-between",
+              gap: "10px",
+            }}>
+              <button
+                onClick={() => setSelectedDate(null)}
+                style={{
+                  flex: 1,
+                  padding: "10px",
+                  borderRadius: "10px",
+                  border: `2px solid ${commonStyles.faded_purple}`,
+                  backgroundColor: commonStyles.white,
+                  color: commonStyles.purple,
+                  cursor: "pointer",
+                  fontSize: commonStyles.button_fontSize,
+                  fontWeight: commonStyles.button_fontWeight,
+                }}
+              >
+                ✓
+              </button>
+              <button
+                onClick={() => setSelectedDate(null)}
+                style={{
+                  flex: 1,
+                  padding: "10px",
+                  borderRadius: "10px",
+                  border: `2px solid ${commonStyles.faded_purple}`,
+                  backgroundColor: commonStyles.white,
+                  color: commonStyles.purple,
+                  cursor: "pointer",
+                  fontSize: commonStyles.button_fontSize,
+                  fontWeight: commonStyles.button_fontWeight,
+                }}
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+## ending of file ./Calendar.tsx ##
+
+## file number: 3
+## starting ./ContentArea.tsx ##
+import { useState } from "react";
+import { commonStyles } from "../../components/theme/default";
+import Assignments from "./Assignments";
+import Grades from "./Grades";
+import Groups from "./Groups";
+
+export default function ContentArea() {
+  const [activeSection, setActiveSection] = useState<string>("Assignments");
+
+  const renderSection = () => {
+    switch (activeSection) {
+      case "Assignments":
+        return <Assignments />;
+      case "Grades":
+        return <Grades />;
+      case "Groups":
+        return <Groups />;
+      default:
+        return <Assignments />;
+    }
+  };
+
+  return (
+    <div
+      style={{
+        minHeight: "calc(100vh - 120px)",
+        background: commonStyles.white,
+        padding: "30px",
+      }}
+    >
+      {renderSection()}
+    </div>
+  );
+}
+## ending of file ./ContentArea.tsx ##
+
+## file number: 4
+## starting ./Grades.tsx ##
+import { commonStyles } from "../../components/theme/default";
+
+export default function Grades() {
+  return (
+    <div>
+      <h2 style={{ 
+        color: commonStyles.purple, 
+        fontSize: commonStyles.button_fontSize,
+        fontWeight: commonStyles.button_fontWeight,
+      }}>
+        <strong>Grades</strong>
+      </h2>
+    </div>
+  );
+}
+## ending of file ./Grades.tsx ##
+
+## file number: 5
+## starting ./Groups.tsx ##
+import { commonStyles } from "../../components/theme/default";
+
+export default function Groups() {
+  return (
+    <div>
+      <h2 style={{ 
+        color: commonStyles.purple, 
+        fontSize: commonStyles.button_fontSize,
+        fontWeight: commonStyles.button_fontWeight,
+        
+      }}>
+       <strong>Groups</strong>
+      </h2>
+    </div>
+  );
+}
+## ending of file ./Groups.tsx ##
+
+## file number: 6
+## starting ./Header.tsx ##
+import { commonStyles, defaultSetting } from "../../components/theme/default";
+import { useAuth } from "../../context/AuthContext";
+
+export default function Header() {
+  const { logout } = useAuth();
+
+  return (
+    <header
+      style={{
+        height: "70px",
+        background: commonStyles.purple,
+        color: commonStyles.white,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        padding: "0 30px",
+      }}
+    >
+      <img 
+        src={`${defaultSetting.base_bot}bot.svg`}
+        alt="TestMe"
+        style={{ 
+          height: "50px", 
+          width: "auto",
+          display: "block",
+        }} 
+      />
+      <button
+        style={{
+          fontSize: commonStyles.button_fontSize,
+          fontWeight: commonStyles.button_fontWeight,
+          backgroundColor: commonStyles.faded_purple,
+          color: commonStyles.white,
+          border: "none",
+          borderRadius: "8px",
+          padding: "8px 16px",
+          cursor: "pointer",
+          transition: "background 0.2s ease",
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.backgroundColor = commonStyles.purple;
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.backgroundColor = commonStyles.faded_purple;
+        }}
+        onClick={() => {
+          logout();
+          window.location.reload();
+        }}
+      >
+        Log out
+      </button>
+    </header>
+  );
+}
+## ending of file ./Header.tsx ##
+
+## file number: 7
+## starting ./Manager.tsx ##
+import { useState } from "react";
+import { commonStyles } from "../../components/theme/default";
+import Header from "./Header";
+import NavigationBar from "./NavigationBar";
+import Assignments from "./Assignments";
+import Grades from "./Grades";
+import Groups from "./Groups";
+
+export default function Management() {
+  const [activeSection, setActiveSection] = useState<string>("Assignments");
+
+  const renderSection = () => {
+    switch (activeSection) {
+      case "Assignments":
+        return <Assignments />;
+      case "Grades":
+        return <Grades />;
+      case "Groups":
+        return <Groups />;
+      default:
+        return <Assignments />;
+    }
+  };
+
+  return (
+    <div style={{ fontFamily: "Arial, sans-serif" }}>
+      <Header />
+      <NavigationBar onSectionChange={setActiveSection} />
+      <div
+        style={{
+          minHeight: "calc(100vh - 120px)",
+          background: commonStyles.white,
+          padding: "30px",
+        }}
+      >
+        {renderSection()}
+      </div>
+    </div>
+  );
+}
+## ending of file ./Manager.tsx ##
+
+## file number: 8
+## starting ./NavigationBar.tsx ##
+import { useState } from "react";
+import { commonStyles, defaultSetting } from "../../components/theme/default";
+
+type SubMenuItem = {
+  label: string;
+  icon: string;
+  on_hover: string;
+  onClick?: () => void;
+};
+
+type MenuItem = {
+  icon: string;
+  on_hover: string;
+  label: string;
+  subItems?: SubMenuItem[];
+};
+
+interface NavigationBarProps {
+  onSectionChange: (section: string) => void;
+}
+
+export default function NavigationBar({ onSectionChange }: NavigationBarProps) {
+  const [activeMenu, setActiveMenu] = useState<number | null>(null);
+  const [hoveredMain, setHoveredMain] = useState<number | null>(null);
+  const [hoveredSub, setHoveredSub] = useState<string | null>(null);
+
+  const menuItems: MenuItem[] = [
+    {
+      icon: `${defaultSetting.base_icons}x_target_b.png`,
+      on_hover: `${defaultSetting.base_icons}white_target_b.png`,
+      label: "Assignments",
+      subItems: [
+        { 
+          label: "Create",
+          icon: `${defaultSetting.base_icons}x_add.png`,
+          on_hover: `${defaultSetting.base_icons}white_add.png`,
+        },
+        { 
+          label: "Grade",
+          icon: `${defaultSetting.base_icons}x_grade.png`,
+          on_hover: `${defaultSetting.base_icons}white_grade.png`,
+        },
+        { 
+          label: "Groups",
+          icon: `${defaultSetting.base_icons}x_group.png`,
+          on_hover: `${defaultSetting.base_icons}white_group.png`,
+        },
+      ],
+    },
+  ];
+
+  const handleMainButtonClick = (index: number) => {
+    setActiveMenu(activeMenu === index ? null : index);
+  };
+
+  const handleSubItemClick = (mainLabel: string, subLabel: string) => {
+    console.log(`Navigating to: ${mainLabel} > ${subLabel}`);
+    onSectionChange(subLabel);
+    setActiveMenu(null);
+  };
+
+  return (
+    <div style={{ background: commonStyles.white }}>
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          padding: "0 10px",
+          borderBottom: `2px solid ${commonStyles.faded_purple}`,
+        }}
+      >
+        {menuItems.map((item, index) => {
+          const isMainActive = activeMenu === index;
+
+          return (
+            <div
+              key={index}
+              style={{
+                position: "relative",
+              }}
+            >
+              <button
+                onClick={() => handleMainButtonClick(index)}
+                onMouseEnter={(e) => {
+                  setHoveredMain(index);
+                  if (!isMainActive) {
+                    e.currentTarget.style.background = "rgba(231, 208, 250, 0.23)";                  }
+                }}
+                onMouseLeave={(e) => {
+                  setHoveredMain(null);
+                  if (!isMainActive) {
+                    e.currentTarget.style.background = "transparent";
+                  }
+                }}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  padding: "15px 16px",
+                  border: "none",
+                  background: isMainActive ? commonStyles.purple : "transparent",
+                  color: isMainActive ? commonStyles.white : commonStyles.purple,
+                  cursor: "pointer",
+                  fontSize: commonStyles.button_fontSize,
+                  fontWeight: commonStyles.button_fontWeight,
+                  whiteSpace: "nowrap",
+                  transition: "all 0.2s ease",
+                  borderBottom: isMainActive
+                    ? `3px solid ${commonStyles.purple}`
+                    : "3px solid transparent",
+                }}
+              >
+                <img 
+                  src={isMainActive ? item.on_hover : item.icon}
+                  alt={item.label}
+                  style={{  
+                    width: "22px",
+                    height: "22px",
+                  }}
+                />
+                <span>{item.label}</span>
+                {item.subItems && (
+                  <span
+                    style={{
+                      fontSize: "10px",
+                      transform: isMainActive ? "rotate(180deg)" : "rotate(0deg)",
+                      transition: "transform 0.3s ease",
+                    }}
+                  >
+                    ▼
+                  </span>
+                )}
+              </button>
+
+              {isMainActive && item.subItems && (
+                <>
+                  <div
+                    onClick={() => setActiveMenu(null)}
+                    style={{
+                      position: "fixed",
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      zIndex: 9998,
+                    }}
+                  />
+                  <div
+                    style={{
+                      position: "absolute",
+                      top: "100%",
+                      left: 0,
+                      background: commonStyles.white,
+                      border: `1px solid ${commonStyles.faded_purple}`,
+                      borderRadius: "0 0 8px 8px",
+                      boxShadow: "0 8px 24px rgba(0,0,0,0.15)",
+                      minWidth: "280px",
+                      zIndex: 9999,
+                    }}
+                  >
+                    {item.subItems.map((subItem, subIndex) => {
+                      const isSubHovered = hoveredSub === subItem.label;
+                      
+                      return (
+                        <button
+                          key={subIndex}
+                          onClick={() => handleSubItemClick(item.label, subItem.label)}
+                          onMouseEnter={(e) => {
+                            setHoveredSub(subItem.label);
+                            e.currentTarget.style.background = commonStyles.faded_purple;
+                          }}
+                          onMouseLeave={(e) => {
+                            setHoveredSub(null);
+                            e.currentTarget.style.background = "transparent";
+                          }}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "10px",
+                            width: "100%",
+                            padding: "12px 20px",
+                            border: "none",
+                            background: "transparent",
+                            color: commonStyles.purple,
+                            cursor: "pointer",
+                            textAlign: "left",
+                            fontSize: commonStyles.button_fontSize,
+                            fontWeight: commonStyles.button_fontWeight,
+                            borderBottom:
+                              subIndex < item.subItems!.length - 1
+                                ? `1px solid ${commonStyles.faded_purple}`
+                                : "none",
+                            borderRadius:
+                              subIndex === 0
+                                ? "0"
+                                : subIndex === item.subItems!.length - 1
+                                ? "0 0 8px 8px"
+                                : "0",
+                            transition: "all 0.15s ease",
+                          }}
+                        >
+                          <img 
+                            src={subItem.icon}
+                            alt={subItem.label}
+                            style={{
+                              width: "18px",
+                              height: "18px",
+                            }}
+                          />
+                          <span>{subItem.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+## ending of file ./NavigationBar.tsx ##
+
+## file number: 9
+## starting ./ToolsDisplay.tsx ##
+
+
+
+export default function ToolsDisplay(){
+    return (
+        <></>
+    )
+}
+## ending of file ./ToolsDisplay.tsx ##
+

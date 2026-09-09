@@ -89,9 +89,9 @@ export default function Home() {
       </div>
       
       */}
-      {/* <DescribeTheImage/> */}
+      <DescribeTheImage/>
       {/* <Login/> */}
-      <Management/>
+      {/* <Management/> */}
     </>
   );
 }

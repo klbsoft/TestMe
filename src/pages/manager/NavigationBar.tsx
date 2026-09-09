@@ -21,6 +21,7 @@ interface NavigationBarProps {
 
 export default function NavigationBar({ onSectionChange }: NavigationBarProps) {
   const [activeMenu, setActiveMenu] = useState<number | null>(null);
+  const [activeSubItem, setActiveSubItem] = useState<string>("Create");
   const [hoveredMain, setHoveredMain] = useState<number | null>(null);
   const [hoveredSub, setHoveredSub] = useState<string | null>(null);
 
@@ -32,18 +33,23 @@ export default function NavigationBar({ onSectionChange }: NavigationBarProps) {
       subItems: [
         { 
           label: "Create",
-          icon: `${defaultSetting.base_icons}x_create_b.png`,
-          on_hover: `${defaultSetting.base_icons}white_create_b.png`,
+          icon: `${defaultSetting.base_icons}x_add.png`,
+          on_hover: `${defaultSetting.base_icons}white_add.png`,
+        },
+        { 
+          label: "Schedule",
+          icon: `${defaultSetting.base_icons}x_schedule.png`,
+          on_hover: `${defaultSetting.base_icons}white_schedule.png`,
         },
         { 
           label: "Grade",
-          icon: `${defaultSetting.base_icons}x_grade_b.png`,
-          on_hover: `${defaultSetting.base_icons}white_grade_b.png`,
+          icon: `${defaultSetting.base_icons}x_grade.png`,
+          on_hover: `${defaultSetting.base_icons}white_grade.png`,
         },
         { 
           label: "Groups",
-          icon: `${defaultSetting.base_icons}x_groups_b.png`,
-          on_hover: `${defaultSetting.base_icons}white_groups_b.png`,
+          icon: `${defaultSetting.base_icons}x_group.png`,
+          on_hover: `${defaultSetting.base_icons}white_group.png`,
         },
       ],
     },
@@ -55,6 +61,7 @@ export default function NavigationBar({ onSectionChange }: NavigationBarProps) {
 
   const handleSubItemClick = (mainLabel: string, subLabel: string) => {
     console.log(`Navigating to: ${mainLabel} > ${subLabel}`);
+    setActiveSubItem(subLabel);
     onSectionChange(subLabel);
     setActiveMenu(null);
   };
@@ -84,7 +91,8 @@ export default function NavigationBar({ onSectionChange }: NavigationBarProps) {
                 onMouseEnter={(e) => {
                   setHoveredMain(index);
                   if (!isMainActive) {
-                    e.currentTarget.style.background = "rgba(231, 208, 250, 0.23)";                  }
+                    e.currentTarget.style.background = "rgba(231, 208, 250, 0.23)";
+                  }
                 }}
                 onMouseLeave={(e) => {
                   setHoveredMain(null);
@@ -159,6 +167,7 @@ export default function NavigationBar({ onSectionChange }: NavigationBarProps) {
                     }}
                   >
                     {item.subItems.map((subItem, subIndex) => {
+                      const isSubActive = activeSubItem === subItem.label;
                       const isSubHovered = hoveredSub === subItem.label;
                       
                       return (
@@ -167,11 +176,15 @@ export default function NavigationBar({ onSectionChange }: NavigationBarProps) {
                           onClick={() => handleSubItemClick(item.label, subItem.label)}
                           onMouseEnter={(e) => {
                             setHoveredSub(subItem.label);
-                            e.currentTarget.style.background = commonStyles.faded_purple;
+                            if (!isSubActive) {
+                              e.currentTarget.style.background = "rgba(231, 208, 250, 0.23)";
+                            }
                           }}
                           onMouseLeave={(e) => {
                             setHoveredSub(null);
-                            e.currentTarget.style.background = "transparent";
+                            if (!isSubActive) {
+                              e.currentTarget.style.background = "transparent";
+                            }
                           }}
                           style={{
                             display: "flex",
@@ -180,8 +193,8 @@ export default function NavigationBar({ onSectionChange }: NavigationBarProps) {
                             width: "100%",
                             padding: "12px 20px",
                             border: "none",
-                            background: "transparent",
-                            color: commonStyles.purple,
+                            background: isSubActive ? commonStyles.purple : "transparent",
+                            color: isSubActive ? commonStyles.white : commonStyles.purple,
                             cursor: "pointer",
                             textAlign: "left",
                             fontSize: commonStyles.button_fontSize,
@@ -200,7 +213,7 @@ export default function NavigationBar({ onSectionChange }: NavigationBarProps) {
                           }}
                         >
                           <img 
-                            src={subItem.icon}
+                            src={isSubActive ? subItem.on_hover : subItem.icon}
                             alt={subItem.label}
                             style={{
                               width: "18px",
