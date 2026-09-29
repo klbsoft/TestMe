@@ -1,29 +1,26 @@
 import { defaultSetting, commonStyles } from "../../components/theme/default";
 import { useState, useEffect } from "react";
 import ProgressBar from "./ProgressBar";
+import { useAssignmentState, useIsDialog } from "../../context/AssignmentStateContext";
+import type { SpeakingAssignment } from "../../session/UserSession";
 
-interface ImageProps {
-  windowHeight: number;
-}
 
-export default function Image({ windowHeight }: ImageProps){
-    const [windowWidth, setWindowWidth] = useState(window.innerWidth);
-    const [isBlurred, setIsBlurred] = useState(true);
 
-    useEffect(() => {
-        const handleResize = () => setWindowWidth(window.innerWidth);
-        window.addEventListener('resize', handleResize);
-        return () => window.removeEventListener('resize', handleResize);
-    }, []);
-
-    const isDesktop = windowWidth > 800;
-    
+export default function Image(){
+    const {session,unitIndex} = useAssignmentState(); 
+    // const isDialog = useIsDialog(); 
     // Calculate max size based on viewport height
-    const maxImageSize = Math.min(
-        isDesktop ? 600 : 400,
-        windowHeight * 0.6 // 60% of viewport height
-    );
-
+    // let maxImageSize = Math.min(
+    //     window.innerWidth > 800 ? 600 : 400,
+    //     window.innerHeight * 0.6 // 60% of viewport height
+    // );
+    const maxImageSize = 580;
+    const assigment = session.assignment as SpeakingAssignment;
+    const unit = assigment.units[unitIndex];
+    const is_a_test = unit.id==="dialog_a"||unit.id==="dialog_b" || unitIndex > 6; 
+    const imageUrl = is_a_test?`${defaultSetting.base_icons}x_listening.png`:unit.content;
+  
+    // console.log({index:unitIndex,content:unit.content});
     return (
         <div style={{
             width: "100%",
@@ -31,9 +28,9 @@ export default function Image({ windowHeight }: ImageProps){
             justifyContent: "center",
             alignItems: "center",
         }}
-        onClick={() => {
-            setIsBlurred(isBlurred ? false : true);
-        }}
+        // onClick={() => {
+        //     setIsBlurred(isBlurred ? false : true);
+        // }}
         >
             <div style={{
                 width: "100%",
@@ -44,7 +41,8 @@ export default function Image({ windowHeight }: ImageProps){
                 alignItems: "center",
             }}>
                 <img 
-                    src={`${defaultSetting.base_bank}0.jpg`}
+                    key={unitIndex}
+                    src={imageUrl}
                     style={{
                         width: "100%",
                         maxWidth: maxImageSize,
@@ -54,7 +52,7 @@ export default function Image({ windowHeight }: ImageProps){
                         border: `solid 2px ${commonStyles.white}`,
                         borderRadius: "22px",
                         boxShadow: "0 4px 8px rgba(0, 0, 0, 0.2)",
-                        filter: isBlurred ? "blur(8px)" : "blur(0px)",
+                        filter: false ? "blur(8px)" : "blur(0px)",
                         transition: "filter 0.5s ease-in-out",
                         WebkitTransition: "filter 0.5s ease-in-out",
                         MozTransition: "filter 0.5s ease-in-out",

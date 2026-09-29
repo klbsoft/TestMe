@@ -28,6 +28,7 @@ export interface SpeakingUnit {
   grade: string | null;
 }
 
+
 export interface SpeakingAssignment {
   id: string;
   type: AssignmentType.speaking;
@@ -56,3 +57,28 @@ export interface AssignmentSession {
   user: string;
   assignment: Assignment;
 }
+
+ 
+
+export interface AssignmentState {
+  session: AssignmentSession;
+  unitIndex: number;
+  answer_state:number; 
+  timer_current: number;
+  timer_started: number; 
+  timeElapsed: number;
+  maxTimePerAnswer: number;
+  maxSessionTime: number;
+  is_recording: boolean;
+  answer_saved: boolean; 
+  completed: boolean; 
+  label_message: string;
+  audio_file: string;
+  isPlaying: boolean; 
+  isTicking: boolean;
+  isListening: boolean; 
+  message_note: string; 
+}
+
+// 0
+// 

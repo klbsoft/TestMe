@@ -1,73 +1,123 @@
 import { useState, useEffect, useRef } from "react";
 import { commonStyles } from "../../components/theme/default";
+import { useAssignmentState, useIsDialog } from "../../context/AssignmentStateContext";
+import {
+    AssignmentType,
+    SpeakingPhase,
+    type SpeakingUnit,
+} from "../../session/UserSession";
 
-export default function Message(){
-    const [timeLeft, setTimeLeft] = useState(60);
-    const [windowWidth, setWindowWidth] = useState(window.innerWidth);
-    const [windowHeight, setWindowHeight] = useState(window.innerHeight);
-    const [showScrollIndicator, setShowScrollIndicator] = useState(false);
-    const contentRef = useRef<HTMLDivElement>(null);
-    const totalTime = 20;
-    const percentage = 5;
-
-    const isDesktop = windowWidth > 800;
-    
-    const maxContentHeight = isDesktop 
-        ? Math.min(windowHeight * 0.4, 300)
-        : 55;// 80 default
-
+// --- single shared resize hook; move to hooks/useWindowSize.ts ---
+function useWindowSize() {
+    const [size, setSize] = useState({
+        width: window.innerWidth,
+        height: window.innerHeight,
+    });
     useEffect(() => {
-        const handleResize = () => {
-            setWindowWidth(window.innerWidth);
-            setWindowHeight(window.innerHeight);
-        };
-        window.addEventListener('resize', handleResize);
-        return () => window.removeEventListener('resize', handleResize);
+        const onResize = () =>
+            setSize({ width: window.innerWidth, height: window.innerHeight });
+        window.addEventListener("resize", onResize);
+        return () => window.removeEventListener("resize", onResize);
     }, []);
+    return size;
+}
 
+function normalizeSentence(input?: string | string[]): string[] {
+    if (!input) return [];
+    return Array.isArray(input) ? input : [input];
+}
+
+export default function Message() {
+    const { message_note,session, unitIndex, timeElapsed, maxTimePerAnswer ,timer_current,timer_started} = useAssignmentState();
+    const { width: windowWidth, height: windowHeight } = useWindowSize();
+
+    const [showScrollIndicator, setShowScrollIndicator] = useState(false);
+    const isDialog = useIsDialog();
+    const contentRef = useRef<HTMLDivElement>(null);
+
+    // --- narrow assignment/unit safely ---
+    const assignment = session.assignment;
+    const isSpeaking = assignment.type === AssignmentType.speaking;
+    const unit: SpeakingUnit | null = isSpeaking
+        ? assignment.units[unitIndex] ?? null
+        : null;
+
+    // --- derive content flags ---
+    const isTestUnit = unit?.id === "dialog_a" || unit?.id === "dialog_b";
+    const isDescribe = unit?.phase === SpeakingPhase.describe_image;
+    const showHelpful = isTestUnit || isDescribe;
+    const lines = showHelpful ? normalizeSentence(unit?.helpful_sentence) : [];
+
+    // --- layout ---
+    const isDesktop = windowWidth > 800;
+    const maxContentHeight = isDesktop
+        ? Math.min(windowHeight * 0.4, 300)
+        : 90;
+
+    // timer ring
+const remaining = Math.max(0, timer_current);
+const ringPercent = 100 - Math.floor((remaining / timer_started) * 100) ;
+ 
+
+// console.log({remain:remaining,porcent:ringPercent})
+    // --- scroll indicator ---
     useEffect(() => {
-        const element = contentRef.current;
-        if (element) {
-            const hasOverflow = element.scrollHeight > element.clientHeight;
-            setShowScrollIndicator(hasOverflow);
-        }
-    }, [maxContentHeight]);
+        const el = contentRef.current;
+        if (!el) return;
+        const hasOverflow = el.scrollHeight > el.clientHeight;
+        setShowScrollIndicator(hasOverflow);
+    }, [maxContentHeight, lines.join("|")]);
 
     const handleScroll = () => {
-        const element = contentRef.current;
-        if (element) {
-            const isAtBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 5;
-            const hasOverflow = element.scrollHeight > element.clientHeight;
-            setShowScrollIndicator(hasOverflow && !isAtBottom);
-        }
+        const el = contentRef.current;
+        if (!el) return;
+        const isAtBottom =
+            el.scrollHeight - el.scrollTop - el.clientHeight < 5;
+        const hasOverflow = el.scrollHeight > el.clientHeight;
+        setShowScrollIndicator(hasOverflow && !isAtBottom);
     };
 
+    // --- render guard ---
+    // if (!unit) {
+    //     return null;
+    // }
+    // if (!showHelpful || lines.length === 0) {
+    //     return null;
+    // }
+
     return (
-        <div style={{
-            position: "relative",
-            backgroundColor: commonStyles.purple,
-            borderRadius: "15px",
-            padding: "12px 15px",
-            maxWidth: "350px",
-            display: "flex",
-            alignItems: "center",
-            gap: "10px",
-        }}>
-            {/* Triangle spike */}
-            <div style={{
-                position: "absolute",
-                bottom: "-10px",
-                left: "50%",
-                transform: "translateX(-50%)",
-                width: 0,
-                height: 0,
-                borderLeft: "10px solid transparent",
-                borderRight: "10px solid transparent",
-                borderTop: `10px solid ${commonStyles.purple}`,
-            }} />
-            
-            {/* Content area */}
-            <div 
+        <div
+            className="page-transition"
+            style={{
+                position: "relative",
+                backgroundColor: commonStyles.purple,
+                borderRadius: "15px",
+                padding: "12px 15px",
+                // left-aligned, wider on desktop
+                width: isDesktop ? "min(520px, 60vw)" : "100%",
+                maxWidth: isDesktop ? 520 : 350,
+                display: "flex",
+                alignItems: "flex-start",
+                gap: "10px",
+                textAlign: "left",
+            }}
+        >
+            {/* speech bubble tail */}
+            <div
+                style={{
+                    position: "absolute",
+                    bottom: "-10px",
+                    left: "50%",
+                    transform: "translateX(-50%)",
+                    width: 0,
+                    height: 0,
+                    borderLeft: "10px solid transparent",
+                    borderRight: "10px solid transparent",
+                    borderTop: `10px solid ${commonStyles.purple}`,
+                }}
+            />
+
+            <div
                 ref={contentRef}
                 onScroll={handleScroll}
                 style={{
@@ -80,77 +130,119 @@ export default function Message(){
                     paddingBottom: "10px",
                 }}
             >
-                <label style={{
-                    color: commonStyles.white,
-                    fontSize: commonStyles.button_fontSize,
-                    fontWeight: "bold",
-                    display: "block",
-                    marginBottom: "5px",
-                }}>
-                    Helpful sentences
+               <label
+                    style={{
+                        color: commonStyles.white,
+                        fontSize: commonStyles.button_fontSize,
+                        fontWeight: "bold",
+                        display: "block",
+                        marginBottom: "5px",
+                    }}
+                >
+                    {unitIndex > 6 || isDialog ? "Info" : `Helpful sentence${message_note}`} 
+                    {unitIndex > 6 ?`${message_note}`:""}
                 </label>
-                <ul style={{
-                    color: commonStyles.white,
-                    fontWeight: commonStyles.button_fontWeight,
-                    fontSize: commonStyles.button_fontSize,
-                    margin: 0,
-                    paddingLeft: "15px",
-                    lineHeight: "1.4",
-                }}>
-                    <li>The amazing view of the picture is stunning</li>
-                    <li>I can see a beautiful landscape with vibrant colors</li>
-                    <li>In the foreground, there appears to be an interesting subject</li>
+                {/* <div
+                     style={{
+                        color: commonStyles.white,
+                        fontWeight: commonStyles.button_fontWeight,
+                        fontSize: commonStyles.button_fontSize,
+                        margin: 0,
+                        paddingLeft: "15px",
+                        lineHeight: "1.4",
+                        textAlign: "left",
+                    }}
+                >
+
+                    {lines}
+                </div>                 */}
+                <ul
+                    className="page-transition"
+                    style={{
+                        color: commonStyles.white,
+                        fontWeight: commonStyles.button_fontWeight,
+                        fontSize: commonStyles.button_fontSize,
+                        margin: 0,
+                        paddingLeft: "15px",
+                        lineHeight: "1.4",
+                        textAlign: "left",
+                    }}
+                >
+                    {
+                        !isDialog && unitIndex < 6?(
+                            <>
+                        <li>Today, I will be describing the...</li>
+                        <li>The first image that I see, shows an illustration of the ...</li>
+                        <li>Also, the photo depicts...</li>
+                        <li>Lastly, the photo shows...</li>
+                        <li>The Landscape is characterized by...</li>
+                            </>
+                        ):
+                        lines
+                        
+                    }
+                    {
+                        unitIndex > 6?(
+                            <li>Speak as clear as you can after the audio...</li>
+                        ):""
+                    }
                 </ul>
             </div>
 
-            {/* Scroll indicator arrow - only when content overflows */}
             {showScrollIndicator && (
-                <div style={{
-                    position: "absolute",
-                    right: "10px",
-                    bottom: "15px",
-                    pointerEvents: "none",
-                }}>
-                    <span style={{
-                        color: commonStyles.white,
-                        fontSize: "12px",
-                        opacity: 0.8,
-                    }}>
+                <div
+                    style={{
+                        position: "absolute",
+                        right: "10px",
+                        bottom: "15px",
+                        pointerEvents: "none",
+                    }}
+                >
+                    <span style={{ color: commonStyles.white, fontSize: "12px", opacity: 0.8 }}>
                         ▼
                     </span>
                 </div>
             )}
 
-            {/* Timer circle */}
-            <div style={{
-                width: "40px",
-                height: "40px",
-                borderRadius: "50%",
-                background: `conic-gradient(${commonStyles.faded_purple} ${percentage}%, ${commonStyles.white} ${percentage}%)`,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                position: "relative",
-                flexShrink: 0,
-            }}>
-                <div style={{
-                    width: "32px",
-                    height: "32px",
-                    borderRadius: "50%",
-                    backgroundColor: commonStyles.purple,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                }}>
-                    <span style={{
-                        color: commonStyles.white,
-                        fontSize: "12px",
-                        fontWeight: "bold",
-                    }}>
-                        {timeLeft}
-                    </span>
+            {/* timer ring */}
+            {!isDialog && (
+                <div
+                 style={{
+            width: "84px",
+            height: "84px",
+            borderRadius: "50%",
+            background: `conic-gradient(${commonStyles.faded_purple} ${ringPercent}%, ${commonStyles.white} ${ringPercent}%)`,
+            display:"flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flexShrink: 0,
+            alignSelf: "center",
+        }}
+                >
+                    <div
+                        style={{
+                            width: "50px",
+                            height: "50px",
+                            borderRadius: "50%",
+                            backgroundColor: commonStyles.purple,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                        }}
+                    >
+                        <span
+                            style={{
+                                color: commonStyles.white,
+                                fontSize: commonStyles.button_fontSize,
+                                fontWeight: commonStyles.button_fontWeight,
+                            }}
+                        >
+                            {remaining}s
+                        </span>
+                    </div>
                 </div>
-            </div>
+            )}
+
         </div>
-    )
+    );
 }

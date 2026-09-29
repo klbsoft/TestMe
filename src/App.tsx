@@ -1,13 +1,14 @@
 import Container from "./components/container/Container";
 import { ViewProvider } from "./context/ViewContext";
-import "./animation.css"
+import "./animation.css";
 import { commonStyles } from "./components/theme/default";
+import Cat from "./Cat";
 
 export default function App() {
   return (
-    <div 
+    <div
       className="page-transition"
-      style={{ 
+      style={{
         width: "100%",
         height: "98dvh",
         margin: "0",
@@ -22,6 +23,7 @@ export default function App() {
       }}
     >
       <ViewProvider>
+        <Cat/>
         <Container />
       </ViewProvider>
     </div>

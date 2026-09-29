@@ -1,97 +1,128 @@
-import { Card, Form, Image } from "react-bootstrap";
-import { useState, useEffect } from "react";
-import { useView } from "../../context/ViewContext";
-import Searcher from "../searcher/Searcher"
-import "../../animation.css"
+import { useEffect, useState } from "react";
+import { AssignmentStateProvider } from "../../context/AssignmentStateContext";
+import { type AssignmentSession } from "../../session/UserSession";
+import { commonStyles, defaultSetting } from "../../components/theme/default";
+import CountDown from "./CountDown";
 import DescribeTheImage from "../describe/Describe";
-import Login from "../login/Login";
-import Management from "../manager/Manager";
- 
-
-
+import { fetchAssigmentSession } from "../../session/fetcher";
+import { PermissionsGate, usePermissions } from "./PermitionsGate"
+// import Completed from "../describe/Completed";
 export default function Home() {
-  const textArray = [
-    "El transporte que necesitas al alcance de tu mano.",
-    "Viaja con aire, viaja cómodo, viaja con la omza.",
-    "Con múltiples funciones para hacerte la vida fácil."
-  ];
+  return (
+    <PermissionsGate>
+      <HomeInner />
+    </PermissionsGate>
+  );
+}
 
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const {setCurrentView} = useView();  
+function HomeInner() {
+  const { status, errorMsg, requestPermissions } = usePermissions();
+  // const {completed} = useAssignmentState();
+  const COUNTDOWN_SECONDS = defaultSetting.initial_count_down;
+
+  const [phase, setPhase] = useState<"idle" | "running" | "done">("idle");
+  const [timer, setTimer] = useState(COUNTDOWN_SECONDS);
+  const done = timer <= 0;
+
+  const handleStart = async () => {
+    // 🔑 the click is the gesture — request permissions here
+    const ok = await requestPermissions();
+    if (!ok) return; // stay on the Start screen (loop)
+
+    setTimer(COUNTDOWN_SECONDS);
+    setPhase("running");
+  };
 
   useEffect(() => {
-    const interval = setInterval(() => {
-      setCurrentIndex((prev) => (prev + 1) % textArray.length);
-    }, 5000);
-    setCurrentView(<Home/>);
-    return () => clearInterval(interval);
-  }, []);
+    if (phase !== "running") return;
+    const id = setInterval(() => setTimer((p) => (p > 0 ? p - 1 : 0)), 1000);
+    return () => clearInterval(id);
+  }, [phase]);
+
+  useEffect(() => {
+    if (phase === "running" && done) setPhase("done");
+  }, [done, phase]);
+
+  const session: AssignmentSession = fetchAssigmentSession();
   
   return (
-    <>
-      {/* 
-          <div 
-       className="page-transition"
-      style={{ 
-        padding: "16px",
-        overflowY: "auto",        // ADDED
-        flex: 1                   // ADDED  
-      }}>
-        
-        <p style={{ marginTop: "16px", color: "#0162BF", display: "flex", alignItems: "center" }}>
-          Viaja seguro cómodo y rápido.
-        </p>
-        
-        <div style={{ position: "relative", width: "100%" }}>
-          <Form.Control 
-            type="search" 
-            placeholder="Buscar ruta" 
-            style={{ 
-              borderRadius: "20px",
-              padding: "10px 16px 10px 50px",
-              border: "2px solid #6CC24A",
-              backgroundColor: "#FFFFFF",
-              color: "#0162BF",
-              width: "100%"
+    <AssignmentStateProvider
+      initial={{
+        session,
+        unitIndex: 0,
+        timeElapsed: 0,
+        maxTimePerAnswer: 45,
+        maxSessionTime: 900,
+        timer_current: 0,
+        timer_started: 0,
+        answer_state:0,
+        is_recording: false,
+        label_message:"",
+        message_note: "",
+        answer_saved: false, 
+        completed: false,
+        audio_file: null,
+        isPlaying: false, 
+        isListening: false,
+        isTicking: false,
+      }}
+    >
+      {phase === "idle" && (
+        <div
+          style={{
+            position: "fixed",
+            top: "50%",
+            left: "50%",
+            transform: "translate(-50%, -50%)",
+            zIndex: 9999,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: "16px",
+          }}
+        >
+          <button
+            onClick={handleStart}
+            style={{
+              padding: "24px 64px",
+              fontSize: "28px",
+              fontWeight: "bold",
+              color: commonStyles.white,
+              backgroundColor: commonStyles.purple,
+              border: "none",
+              borderRadius: "16px",
+              cursor: "pointer",
+              letterSpacing: "1px",
+              textTransform: "uppercase",
+              boxShadow: "0 8px 30px rgba(0,0,0,0.25)",
             }}
-            onClick={()=>setCurrentView(<Searcher/>)}
-          />
-          <Image 
-            src="/opti-via/img/groadmap.png" 
-            alt="Rutas"
-            height="24"
-            width="24"
-            style={{ 
-              position: "absolute",
-              left: "16px",
-              top: "50%",
-              transform: "translateY(-50%)"
-            }} 
-          />
+          >
+            Start
+          </button>
+
+          {status === "blocked" && (
+            <p
+              style={{
+                color: commonStyles.purple,
+                fontSize: 16,
+                fontWeight: "bold",
+                margin: 0,
+                textAlign: "center",
+                maxWidth: 320,
+              }}
+            >
+              {errorMsg} Please allow the microphone in your browser, then press Start again.
+            </p>
+          )}
         </div>
+      )}
 
-        <p style={{ marginTop: "16px", color: "#0162BF", textAlign: "center" }}>
-          {textArray[currentIndex]}
-        </p>
-
-        <Card style={{ marginTop: "16px", borderRadius: "12px", overflow: "hidden" }}>
-          <Card.Img 
-            variant="top" 
-            src={`/opti-via/img/carrusel/${currentIndex + 1}.png`}
-            style={{ 
-                height: "340px",
-                width: "340px",
-                objectFit: "cover" ,
-                borderRadius:"5%"
-            }}
-          />
-        </Card>
-      </div>
+      {phase === "running" && !done && (
+        <CountDown current={timer} started={1} label="Be seated" />
+      )}
       
-      */}
-      <DescribeTheImage/>
-      {/* <Login/> */}
-      {/* <Management/> */}
-    </>
+      {phase === "done"&&<DescribeTheImage />}
+
+    </AssignmentStateProvider>
   );
 }

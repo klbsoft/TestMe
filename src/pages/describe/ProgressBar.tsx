@@ -1,25 +1,28 @@
 import { useState } from "react";
 import { commonStyles } from "../../components/theme/default";
+import { useAssignmentState } from "../../context/AssignmentStateContext";
+import type { SpeakingAssignment, SpeakingUnit } from "../../session/UserSession";
 
 export default function ProgressBar(){
-    const [progress, setProgress] = useState(0);
-    const [isDragging, setIsDragging] = useState(false);
-    const total = 10;
+   
+    const {session,unitIndex} = useAssignmentState(); 
+    const assigment = session.assignment as SpeakingAssignment; 
+    const units = assigment.units as SpeakingUnit[] ; 
+    // const handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    //     const rect = e.currentTarget.getBoundingClientRect();
+    //     const x = e.clientX - rect.left;
+    //     const percentage = (x / rect.width) * 100;
+    //     setProgress(Math.min(100, Math.max(0, percentage)));
+    // };
 
-    const handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
-        const rect = e.currentTarget.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const percentage = (x / rect.width) * 100;
-        setProgress(Math.min(100, Math.max(0, percentage)));
-    };
-
-    const handleDrag = (e: React.MouseEvent<HTMLDivElement>) => {
-        if (isDragging) {
-            handleClick(e);
-        }
-    };
-
-    const currentValue = Math.round((progress / 100) * total);
+    // const handleDrag = (e: React.MouseEvent<HTMLDivElement>) => {
+    //     if (isDragging) {
+    //         handleClick(e);
+    //     }
+    // };
+    const total = units.length; 
+    const currentValue = unitIndex + 1; 
+    const progress = total > 0 ? (currentValue / total) * 100 : 0;
 
     return (
         <div style={{
@@ -50,13 +53,13 @@ export default function ProgressBar(){
                 </label>
             </div>
             <div
-                onMouseDown={(e) => {
-                    setIsDragging(true);
-                    handleClick(e);
-                }}
-                onMouseMove={handleDrag}
-                onMouseUp={() => setIsDragging(false)}
-                onMouseLeave={() => setIsDragging(false)}
+                // onMouseDown={(e) => {
+                //     setIsDragging(true);
+                //     handleClick(e);
+                // }}
+                // onMouseMove={handleDrag}
+                // onMouseUp={() => setIsDragging(false)}
+                // onMouseLeave={() => setIsDragging(false)}
                 style={{
                     width: "100%",
                     height: "20px",
@@ -72,7 +75,7 @@ export default function ProgressBar(){
                     height: "100%",
                     backgroundColor: commonStyles.purple,
                     borderRadius: "10px",
-                    transition: isDragging ? "none" : "width 0.3s ease",
+                    // transition: isDragging ? "none" : "width 0.3s ease",
                 }} />
             </div>
         </div>

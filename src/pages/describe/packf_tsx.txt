@@ -1,40 +1,230 @@
 ## file number: 1
 ## starting ./ActionBtn.tsx ##
-import { useState, useEffect } from "react";
-import { commonStyles } from "../../components/theme/default";
+import { useState, useEffect, useRef } from "react";
+import { commonStyles, defaultSetting } from "../../components/theme/default";
+import { useAssignmentState, useIsDialog, useUpdateAssignment } from "../../context/AssignmentStateContext";
+import { SpeakingPhase, type SpeakingAssignment, type SpeakingUnit } from "../../session/UserSession";
+import { cancelRecording, finishRecording, startRecording } from "./media/scripts";
 
-export default function ActionBtn(){
-    const [isRecording, setIsRecording] = useState(false);
+
+export default function ActionBtn() {
     const [waveHeights, setWaveHeights] = useState<number[]>([10, 20, 15, 30, 25, 35, 20, 15, 25, 30, 15, 20]);
+    const { unitIndex, session, timer_current, is_recording, answer_state, label_message } = useAssignmentState();
+    // const [answer_state,setAswerState] = useState(0); 
+    // const [dialog_state,setDialogState] = useState(0); 
+    // const [button_label,setButtonLabel] = useState("Look at the image carefully...");//useState("Start Assigment");
+    // const [buttonState,setButtonState] = useState(true); 
+    const [buttonColor, setButtonColor] = useState(commonStyles.purple);
+    // const [started,setStart] = useState(false); 
+    const update = useUpdateAssignment();
+    // const isDialog = useIsDialog(); 
+    // const [completed,setCompleted] = useState(false); 
+    const [buffer, setBuffer] = useState(null);
+    const ANALIZE_TIMER = defaultSetting.analize_picture_timer;
+    const ANWSWER_TIMER = defaultSetting.answer_picture_timer;
 
     useEffect(() => {
-        if (isRecording) {
-            const interval = setInterval(() => {
-                setWaveHeights(prev => 
-                    prev.map(() => Math.floor(Math.random() * 10) + 2)
-                );
-            }, 100);
-            return () => clearInterval(interval);
-        }
-    }, [isRecording]);
+        if (buffer === null) return;
 
+        // console.log("[recorder] blob ready:", buffer.size, "bytes");
+
+        update((prev) => {
+            const assignment = prev.session.assignment as SpeakingAssignment;
+
+            const units = assignment.units.map((unit, index) => {
+                const isCurrentUnit = index === prev.unitIndex;
+                if (!isCurrentUnit) return unit;
+                return { ...unit, answer: buffer };
+            });
+            const isLast = prev.unitIndex >= assignment.units.length - 1;
+
+            const nextAssignment = { ...assignment, units };
+            const nextSession = { ...prev.session, assignment: nextAssignment };
+            // console.log(nextSession);
+            // if (answer_state < 5) {
+            return {
+                session: nextSession,
+                answer: buffer,
+                is_recording: false,
+                isListening: false, 
+                unitIndex: isLast ? prev.unitIndex : prev.unitIndex + 1,
+                answer_state: prev.answer_state + 1,
+                answer_saved:true,
+                completed:isLast
+            };
+            // }
+            // return {
+            //     session: nextSession,
+            //     answer: buffer,
+            //     is_recording: false,
+            // };
+        });
+        
+    }, [buffer]);
+    // console.log(session);
+    useEffect(() => {
+        if (!is_recording) return;
+
+        // 1️⃣ kick off the actual recorder
+        startRecording().catch((err) => {
+            console.error("[recorder] start failed:", err);
+            update({ is_recording: false });
+        });
+
+        // 2️⃣ reset the timer state now that recording has begun
+        update({ timer_current: ANWSWER_TIMER, timer_started: ANWSWER_TIMER });
+
+        // 3️⃣ wave animation (fast, visual only)
+        const waveId = setInterval(() => {
+            setWaveHeights((prev) =>
+                prev.map(() => Math.floor(Math.random() * 10) + 2)
+            );
+        }, 100);
+
+        // 4️⃣ countdown timer (1/sec)
+        const timerId = setInterval(() => {
+            update((prev) => {
+                if (prev.timer_current === 0) {
+                    // ⏹ time's up → stop & save the recording
+                    finishRecording()
+                        .then((blob) => {
+                            setBuffer(blob);
+                            console.log("[recorder] blob ready:", blob.size, "bytes");
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement("a");
+                            a.href = url;
+                            a.download = `unitIndex[${unitIndex}]_answerState[${answer_state}]_audio.webm`;
+                            a.click();
+                            URL.revokeObjectURL(url);
+                        })
+                        .catch((err) => {
+                            console.warn("[recorder] finish failed:", err);
+                            setBuffer(null);
+                            return {
+                                answer: null,
+                                is_recording: false,
+                                unitIndex: prev.unitIndex + 1,
+                                answer_state: prev.answer_state + 1,
+                            }
+                        });
+
+                    clearInterval(timerId);
+                    return { timer_current: 0 };
+                }
+                return { timer_current: prev.timer_current - 1 };
+            });
+        }, 1000);
+
+        // cleanup: if the component unmounts or is_recording flips off
+        return () => {
+            clearInterval(waveId);
+            clearInterval(timerId);
+            cancelRecording(); // discard if it was still going
+        };
+    }, [is_recording]);
+
+
+
+
+    useEffect(() => {
+        if (unitIndex > 0 && answer_state < 5) {
+            Start();
+        }
+    }, [unitIndex]);
+    // useEffect(()=>{
+    //     const interval = setInterval(()=>{
+    //         update({timer_current:timer_current-1})
+    //     },1000);
+    // },[unitIndex])
+
+    // console.log(isDialog);
+
+    // if (!isDialog && answer_state === 1){
+    //     button_label = "View Image"
+    // }
+    /*
+       0 = Dialog
+       1 = Test
+       2 = q1
+       3 = q2
+       4 = q3
+       5 = q4
+       6 = Dialog
+       7 = Test
+       8 = q1
+       9 = q2
+       10 = q3
+       11 = q4
+    */
+
+    const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const unitIndexRef = useRef(unitIndex);
+    unitIndexRef.current = unitIndex;
+
+    async function Start() {
+        // kill ANY previous interval before starting a new one
+        if (timerRef.current !== null) {
+            clearInterval(timerRef.current);
+            timerRef.current = null;
+        }
+
+        // setStart(true);
+        // setButtonColor(commonStyles.faded_purple);
+        // setButtonLabel("In Progress...");
+        // console.log({index:unitIndex,state:answer_state});
+        update({
+            timer_current: ANALIZE_TIMER,
+            timer_started: ANALIZE_TIMER,
+            label_message: "Look at the image carefully...",
+        });
+
+        // const assigment = session.assignment as SpeakingAssignment;
+        // const units = assigment.units as SpeakingUnit[];
+
+        timerRef.current = setInterval(() => {
+            update((prev) => {
+                if (prev.timer_current > 0) {
+                    return { timer_current: prev.timer_current - 1 };
+                }
+
+                if (prev.timer_current === 0) {
+                    if (timerRef.current !== null) {
+                        clearInterval(timerRef.current);
+                        timerRef.current = null;
+                    }
+                    return { is_recording: true };
+                }
+
+                return {};
+            });
+        }, 1000);
+    }
+    // if(!isRecording && !buttonState){
+    //     setButtonColor("#b100ae")
+    // }
     return (
-        <div 
-            onClick={() => setIsRecording(!isRecording)}
+        <div
+
+            onClick={async () => {
+                // if(!started){
+                //     await Start();
+                // }
+            }}
             style={{
-                backgroundColor: isRecording ? commonStyles.faded_purple : commonStyles.purple,
+
+                backgroundColor: is_recording ? commonStyles.faded_purple : buttonColor,
                 borderRadius: "15px",
-                padding: isRecording ? "5px 20px" : "15px 20px",
+                padding: is_recording ? "5px 20px" : "15px 20px",
                 display: "flex",
                 justifyContent: "center",
                 alignItems: "center",
                 cursor: "pointer",
                 gap: "5px",
-                minHeight: isRecording ? "12px" : "50px",
+                minHeight: is_recording ? "12px" : "50px",
                 boxSizing: "border-box",
             }}
         >
-            {isRecording ? (
+            {is_recording ? (
                 <div style={{
                     display: "flex",
                     alignItems: "center",
@@ -56,12 +246,15 @@ export default function ActionBtn(){
                     ))}
                 </div>
             ) : (
-                <div style={{
-                    color: commonStyles.white,
-                    fontSize: commonStyles.button_fontSize,
-                    fontWeight: commonStyles.button_fontWeight,
-                }}>
-                   Start Assigment
+                <div id="something"
+                    style={{
+                        color: commonStyles.white,
+                        fontSize: commonStyles.button_fontSize,
+                        fontWeight: commonStyles.button_fontWeight,
+                        minWidth: "80px",
+                        textAlign: "center",
+                    }}>
+                    {label_message}
                 </div>
             )}
         </div>
@@ -70,125 +263,770 @@ export default function ActionBtn(){
 ## ending of file ./ActionBtn.tsx ##
 
 ## file number: 2
+## starting ./Audio.tsx ##
+
+import { useEffect, useRef } from 'react';
+import { useAssignmentState, useUpdateAssignment } from '../../context/AssignmentStateContext';
+import type { SpeakingAssignment, SpeakingUnit } from '../../session/UserSession';
+
+
+export default function AudioFile() {
+    const {isPlaying, audio_file } = useAssignmentState();
+    const update = useUpdateAssignment();
+
+    // one persistent audio element for this component's lifetime
+    const audioRef = useRef<HTMLAudioElement | null>(null);
+
+    // ---- 1. create the element once, attach the ended handler ----
+    useEffect(() => {
+        const audio = new Audio();
+        audio.preload = 'auto';
+
+        const handleEnded = () => {
+            // reflect reality back into state
+            update((prev)=>{
+                // console.log(prev);
+                if(prev.unitIndex === 0){
+                        const index = prev.unitIndex+1; 
+                        // const assigment = prev.session.assignment as SpeakingAssignment;
+                        // const units = assigment.units as SpeakingUnit[];
+                        // const content = units[index].content; 
+                          return {
+                        unitIndex: index,
+                        // audio_file: content,
+                        // isPlaying: true,
+                        // isTicking: false,
+                        // message_note: "",
+                    }
+                }
+                if(prev.unitIndex === 6){
+                        const index = prev.unitIndex+1; 
+                        const assigment = prev.session.assignment as SpeakingAssignment;
+                        const units = assigment.units as SpeakingUnit[];
+                        const content = units[index].content; 
+                        // console.log({content,index})
+                    return {
+                        unitIndex: index,
+                        audio_file: content,
+                        isPlaying: true,
+                        isTicking: false,
+                        message_note: "",
+                    }
+                }
+                  
+                return {
+                        isPlaying: false,
+                        isTicking: prev.unitIndex > 6 ? true:false,
+                        message_note: "",
+                }
+            });
+
+        };
+        audio.addEventListener('ended', handleEnded);
+
+        audioRef.current = audio;
+
+        return () => {
+            audio.removeEventListener('ended', handleEnded);
+            audio.pause();
+            audio.src = '';           // release buffered data
+            audioRef.current = null;
+        };
+        // update is stable from your store; if not, include it
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    // ---- 2. whenever audio_file changes, swap src and reload ----
+    useEffect(() => {
+        // console.log("changed");
+        const audio = audioRef.current;
+        // console.log({current:audio.src}); 
+        // console.log({new:audio_file});
+        if (!audio) return;
+         
+        // only touch src if it actually changed
+        if (audio_file && audio.src !== audio_file) {
+            audio.src = audio_file;
+            audio.load();             // forces reload of the new file
+        }
+    }, [audio_file]);
+
+    // ---- 3. whenever isPlaying changes, play / pause ----
+useEffect(() => {
+  const audio = audioRef.current;
+  if (!audio) return;
+
+  const timeoutId = setTimeout(() => {
+    if (isPlaying) {
+      if (!audio.src) return;
+      audio.play().catch((err) => {
+        console.error('play failed', err);
+        update({ isPlaying: false });
+      });
+    } else {
+      audio.pause();
+    }
+  }, 250);
+
+  return () => clearTimeout(timeoutId);
+}, [isPlaying, audio_file]);
+
+    return <div />;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// import { useCallback, useEffect, useRef, useState } from "react";
+// import type { RefObject } from "react";
+// import { useAssignmentState, useUpdateAssignment } from "../../context/AssignmentStateContext";
+// import type { SpeakingAssignment, SpeakingUnit } from "../../session/UserSession";
+
+// const DEBUG_MODE = false;
+
+// const log = (...args: unknown[]) => { if (DEBUG_MODE) console.log(...args); };
+// const warn = (...args: unknown[]) => { if (DEBUG_MODE) console.warn(...args); };
+// const error = (...args: unknown[]) => { if (DEBUG_MODE) console.error(...args); };
+
+
+// export default function AudioFile(){
+//     const {session,unitIndex} = useAssignmentState();
+//     const update = useUpdateAssignment(); 
+//     useEffect(()=>{
+//         update({unitIndex:6,answer_state:5});
+//     },[])
+    
+//     function onEnded(e){
+//         update({isPlaying:false})
+//     }
+//     function element(){
+//         // update((prev)=>{return {unitIndex:prev.unitIndex+1}})
+//         const assigment = session.assignment as SpeakingAssignment;
+//         const units = assigment.units as SpeakingUnit[];
+//         const content = units[unitIndex]?.content; 
+//         console.log({unitIndex,content})
+//         const audio = new Audio(content);
+//         audio.onended = onEnded; 
+//         audio.load(); 
+//         audio.play(); 
+//         // update((prev)=>{
+//         //         const assigment = prev.session.assignment as SpeakingAssignment;
+//         //         const units = assigment.units as SpeakingUnit[];
+//         //         const content = units[0]?.content; 
+//         //         // const audio = new Audio(content);
+//         //     return prev; 
+//         // })
+//         return audio; 
+//     }
+// return (
+//     <div onLoad={element}>
+         
+//     </div>
+// )
+// }
+
+// export default function Audio() {
+
+//     const audioRef = useRef<HTMLAudioElement | null>(null);
+//     const {audio_file,isPlaying} = useAssignmentState(); 
+//     const [ended,setEnded] = useState(false); 
+//     const update = useUpdateAssignment();
+//     useEffect(()=>{
+//         if(ended === true){
+//             // console.log(ended);
+//             update((prev)=>{
+//                     // console.log(prev); 
+//                     if(prev.unitIndex === 0){
+//                         return {unitIndex: 1};
+//                     }
+        
+//                     if(prev.unitIndex === 6)
+//                     {
+//                         // console.log("ok");
+//                         const index = prev.unitIndex + 1; // this should be 7 
+//                         const assigment = prev.session.assignment as SpeakingAssignment;
+//                         const units = assigment.units as SpeakingUnit[];
+//                         const content = units[index]?.content; 
+//                         //    console.log("ok");
+//                         return {
+//                             audio_file: content,
+//                             isPlaying: false, 
+//                             unitIndex: index,
+//                         }
+//                     }
+//                     // console.log("ok")
+//                     return prev; 
+//                 });
+//         }
+//         setEnded(false);
+//     },[ended]);
+
+//     useEffect(() => {
+//         // console.log({audio_file,isPlaying})
+//         if (audio_file === "" || audio_file === null) {
+//             return;
+//         }
+//         if(isPlaying===true){
+//             setTimeout(()=>{
+//                 playAudio(audioRef);
+//             },500);
+//         }
+//     }, [audio_file,isPlaying]);
+//     return (
+//         <audio
+//             ref={audioRef}
+//             src={audio_file===""||audio_file===null?null:audio_file}
+//             onEnded={()=>{
+//                 setEnded(true)
+//             }}
+//         />
+//     );
+// }
+
+
+// export function playAudio(audioRef: RefObject<HTMLAudioElement | null>) {
+//     const a = audioRef.current;
+
+//     if (!a) {
+//         warn("[audio] playAudio: no audio element (ref is null)");
+//         return;
+//     }
+
+//     if (!a.src && !a.currentSrc) {
+//         warn("[audio] playAudio: no source yet", {
+//             src: a.src,
+//             currentSrc: a.currentSrc,
+//             readyState: a.readyState,
+//         });
+//         return;
+//     }
+
+//     log("[audio] playAudio: attempting", {
+//         src: a.src,
+//         currentSrc: a.currentSrc,
+//         readyState: a.readyState,
+//         networkState: a.networkState,
+//         paused: a.paused,
+//         muted: a.muted,
+//         volume: a.volume,
+//         duration: a.duration,
+//     });
+
+//     const attemptPlay = (reason: string) => {
+//         a.play()
+//             .then(() => log(`[audio] play succeeded (${reason})`))
+//             .catch((err) => {
+//                 error(`[audio] play FAILED (${reason}):`, err.name, err.message, err);
+//             });
+//     };
+
+//     if (a.readyState === 0) {
+//         warn("[audio] readyState is 0 — waiting for 'canplay'");
+//         a.addEventListener("canplay", () => attemptPlay("after canplay"), { once: true });
+//         a.addEventListener("error", () => {
+//             error("[audio] error event while loading:", a.error);
+//         }, { once: true });
+//         a.load();
+//         return;
+//     }
+
+//     attemptPlay("immediate");
+// }
+
+// interface AudioProps {
+//     onEnded?: () => void;
+// }
+
+## ending of file ./Audio.tsx ##
+
+## file number: 3
 ## starting ./Avatar.tsx ##
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Message from "./Message";
 import { defaultSetting } from "../../components/theme/default";
+// import { playAudio } from "./media/scripts";
+import { useAssignmentState, useUpdateAssignment } from "../../context/AssignmentStateContext";
+import type { SpeakingAssignment, SpeakingUnit } from "../../session/UserSession";
 
-export default function Avatar(){
+import { useFooter } from "../../context/FooterContext";
+import AudioFile from "./Audio";
+ 
+
+export default function Avatar() {
+
     const [bot, setBot] = useState<string>(`${defaultSetting.base_bot}bot.svg`);
+    const update = useUpdateAssignment();
+    const { is_recording,isTicking,isListening,answer_state, session, unitIndex, answer_saved, completed ,isPlaying} = useAssignmentState();
+    // const [audioFile, setAudio] = useState<string>(null); //`${defaultSetting.base_dialogs}test.mp3`;
+    // const [isTicking, setTickState] = useState(false);
+    // const [isListening, setListenState] = useState(false);
+    const LISTENING_TIMER = defaultSetting.think_about_listening;//20; 
+    const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    useEffect(()=>{
+        const base = `${defaultSetting.base_bot}`;
+        if(is_recording === true){
+            setBot(`${base}bot-listen-static.svg`)
+            return; 
+        }
+        if(isTicking === true){
+            setBot(`${base}bot-questions-no-marks.svg`)
+            return;
+        }
+        if(isPlaying === true){
+            setBot(`${base}bot-talks-static.svg`)
+            return; 
+        }
+        setBot(`${base}bot.svg`)
+    },[isTicking,is_recording,isPlaying]);
+    useEffect(()=>{
+        // console.log(isTicking);
+        if(isTicking === false)return;
+        // if(isTicking===true)return;
+        // console.log("ok");
+        // kill ANY previous interval before starting a new one
+        if (timerRef.current !== null) {
+            clearInterval(timerRef.current);
+            timerRef.current = null;
+        }
+        // if (isTicking === true) {
+        //     return;
+        // }
+        // setTickState(true);
+        // setListenState(true);
+
+        // setStart(true);
+        // setButtonColor(commonStyles.faded_purple);
+        // setButtonLabel("In Progress...");
+        // console.log({index:unitIndex,state:answer_state});
+        update({
+            timer_current: LISTENING_TIMER,
+            timer_started: LISTENING_TIMER,
+            label_message: "Wait for the timer to talk..."
+        });
+
+        // const assigment = session.assignment as SpeakingAssignment;
+        // const units = assigment.units as SpeakingUnit[];
+
+        timerRef.current = setInterval(() => {
+            update((prev) => {
+                if (prev.timer_current > 0) {
+                    return { timer_current: prev.timer_current - 1 };
+                }
+                clearInterval(timerRef.current);
+                timerRef.current = null;
+                return { 
+                    // label_message: "SPEAK NOW!!!",
+                    is_recording: true,
+                    answer_saved: false,
+                    isTicking: false, 
+                    isListening: true,
+                    message_note: " : SPEAK NOW!!!",
+                };
+            });
+        }, 1000);
+    },[isTicking]);
+    
+    useEffect(()=>{
+        if(unitIndex===0){
+            update((prev)=>{
+                const assigment = prev.session.assignment as SpeakingAssignment;
+                const units = assigment.units as SpeakingUnit[];
+                const content = units[prev.unitIndex].content; 
+                return {
+                    audio_file: content,
+                    isPlaying: true,
+                }
+            })
+        }
+            // update((prev)=>{
+            //     if(prev.unitIndex === 0){
+            //         return {unitIndex:6,answer_state:5};
+            //     }else{
+            //         return prev; 
+            //     }
+            // }); 
+            // update({unitIndex:6,answer_state:5});
+        // }
+    },[]);
+
+    useEffect(()=>{
+        // console.log({unitIndex,answer_state})
+        if(unitIndex === 6 && answer_state === 5){
+            update((prev)=>{
+                // console.log(prev);
+                const assigment = prev.session.assignment as SpeakingAssignment;
+                const units = assigment.units as SpeakingUnit[];
+                const content = units[prev.unitIndex].content; 
+            return {
+                audio_file: content,
+                isPlaying: true, 
+                label_message: "Listen to the bot."
+            }
+            })
+        }
+    },[unitIndex,answer_state])
+
+    useEffect(()=>{
+         update((prev)=>{
+                // console.log(prev);
+             if(prev.unitIndex > 7){
+                    const assigment = prev.session.assignment as SpeakingAssignment;
+                    const units = assigment.units as SpeakingUnit[];
+                    const content = units[prev.unitIndex].content; 
+                return {
+                    audio_file: content,
+                    isPlaying: true, 
+                    message_note: "",
+                    label_message:"Listen to the bot.",
+                }
+             }
+             return prev; 
+        })
+    },[unitIndex]);
+    
+    // useEffect(()=>{
+    //     // console.log({unitIndex,isPlaying})
+    //     if(unitIndex > 6 && isPlaying === false){
+    //         update((prev)=>{
+    //             console.log(prev);
+    //             const assigment = prev.session.assignment as SpeakingAssignment;
+    //             const units = assigment.units as SpeakingUnit[];
+    //             const content = units[prev.unitIndex].content; 
+    //             return{
+    //                 audio_file: content,
+    //                 isPlaying: true,
+    //             }
+    //         });
+    //     }
+    // },[unitIndex,isPlaying]);
+
     return (
-        <div style={{
+        <div 
+            className="page-transition"
+            style={{
             display: "flex",
             flexDirection: "column",
             alignItems: "center",
             paddingTop: "8px",
         }}>
-            <Message/>
-            <img 
+            <Message />
+
+            <AudioFile/>
+
+            <img
                 src={bot}
-                width={"120px"}
-                height={"120px"}
+                width={"140px"}
+                height={"140px"}
                 style={{ marginTop: "10px" }}
+            // onClick={() => { playAudio(audioRef) }}
             />
         </div>
-    )
+    );
 }
+
+
+/*
+
+                   
+
+              
+
+*/
+
 ## ending of file ./Avatar.tsx ##
 
-## file number: 3
+## file number: 4
+## starting ./Completed.tsx ##
+import { defaultSetting, commonStyles } from "../../components/theme/default";
+
+export default function Completed() {
+    return (
+        <div style={{
+            width: "100%",
+            height: "100%",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "20px",
+            boxSizing: "border-box",
+        }}>
+            <div style={{
+                backgroundColor: commonStyles.clear_purple,
+                borderRadius: "22px",
+                padding: "40px 60px",
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                gap: "20px",
+                boxShadow: "0 4px 8px rgba(0, 0, 0, 0.2)",
+                border: `solid 2px ${commonStyles.white}`,
+                maxWidth: "500px",
+                width: "100%",
+            }}>
+                <img
+                    src={`${defaultSetting.base_bot}bot-exited-static.svg`}
+                    width={"140px"}
+                    height={"140px"}
+                    alt="bot"
+                />
+                <h1 style={{
+                    color: commonStyles.white,
+                    fontSize: "24px",
+                    fontWeight: "bold",
+                    margin: 0,
+                    textAlign: "center",
+                }}>
+                    Congratulations!
+                </h1>
+                <p style={{
+                    color: commonStyles.white,
+                    fontSize: commonStyles.button_fontSize,
+                    fontWeight: commonStyles.button_fontWeight,
+                    margin: 0,
+                    textAlign: "center",
+                    lineHeight: "1.4",
+                }}>
+                    You have completed this assignment.
+                </p>
+            </div>
+        </div>
+    );
+}
+## ending of file ./Completed.tsx ##
+
+## file number: 5
 ## starting ./Describe.tsx ##
 import { useState, useEffect } from "react";
 import "../../animation.css"
 import Image from "./Image";
 import Avatar from "./Avatar";
 import ActionBtn from "./ActionBtn";
+import type { AssignmentSession, SpeakingAssignment, SpeakingUnit } from "../../session/UserSession";
+import { SpeakingPhase } from "../../session/UserSession";
+import { commonStyles } from "../../components/theme/default";
+import { useAssignmentState,useUpdateAssignment } from "../../context/AssignmentStateContext";
+import Completed from "./Completed";
 
-export default function DescribeTheImage() {
-  const [isRecording, setIsRecording] = useState(false);
-  const [recordedAudio, setRecordedAudio] = useState<string | null>(null);
+export default function DescribeTheImage(){
+    const {completed} = useAssignmentState(); 
+  return (
+   <>
+    {
+      (completed===true)?<Completed/>:<Inner/>
+    }
+   </>
+  )
+}
+
+function Inner() {
+  // const [currentUnitIndex, setCurrentUnitIndex] = useState(0);
+  const {session,unitIndex} = useAssignmentState();
+  const update = useUpdateAssignment();
+  
+  // const [isRecording, setIsRecording] = useState(false);
+  // const [recordedAudio, setRecordedAudio] = useState<string | null>(null);
   const [windowWidth, setWindowWidth] = useState(window.innerWidth);
-  const [windowHeight, setWindowHeight] = useState(window.innerHeight);
+  // const [windowHeight, setWindowHeight] = useState(window.innerHeight);
 
+  // Handle window resize
   useEffect(() => {
     const handleResize = () => {
       setWindowWidth(window.innerWidth);
-      setWindowHeight(window.innerHeight);
+      // setWindowHeight(window.innerHeight);
     };
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
+  // Loop over assignment units
+  // useEffect(() => {
+  //   if (session.assignment.type === "speaking") {
+  //     const units = session.assignment.units;
+  //     if (units && units.length > 0) {
+  //       const unit = units[currentUnitIndex]; 
+  //       console.log(unit); 
+  //       setCurrentUnit(unit);
+  //     }
+  //   }
+  // }, [currentUnitIndex]);
+
+  
+
   const isDesktop = windowWidth > 800;
+
+  // if (!currentUnit) {
+  //   return (
+  //     <div style={{
+  //       width: "100%",
+  //       height: "100%",
+  //       display: "flex",
+  //       alignItems: "center",
+  //       justifyContent: "center",
+  //       color: commonStyles.purple,
+  //       fontSize: "20px",
+  //     }}>
+  //       Loading...
+  //     </div>
+  //   );
+  // }
+  const assigment = session.assignment as SpeakingAssignment;
+  const unit = assigment.units[unitIndex] as SpeakingUnit;
+  const currentUnit = unit; 
+  // console.log(currentUnit)
+  const isDescribePhase = currentUnit.phase === SpeakingPhase.describe_image;
 
   return (
     <div style={{
       width: "100%",
       height: "100%",
       display: "flex",
-      flexDirection: isDesktop ? "row" : "column",
+      flexDirection: "column",
       alignItems: "center",
       justifyContent: "center",
       overflowY: "auto",
       padding: "20px",
       boxSizing: "border-box",
-      gap: isDesktop ? "40px" : "5px",    }} // default 40px
->
-      {/* Left side - Avatar and ActionBtn */}
-      <div style={{
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        width: isDesktop ? "auto" : "100%",
-        order: isDesktop ? 1 : 2,
-        flexShrink: 0,
+      gap: isDesktop ? "40px" : "5px",
+    }}>
+      {/* Unit counter */}
+      {/* <div style={{
+        position: "absolute",
+        top: "10px",
+        right: "20px",
+        color: "#0367C7",
+        fontSize: "16px",
+        fontWeight: "500",
       }}>
-        <Avatar/>
-        <ActionBtn/>
+        {currentUnitIndex + 1} / {session.assignment.type === "speaking" ? session.assignment.units.length : 0}
+      </div> */}
+
+      {/* Main content area */}
+      <div style={{
+        width: "100%",
+        display: "flex",
+        flexDirection: isDesktop ? "row" : "column",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: isDesktop ? "40px" : "5px",
+      }}>
+        {/* Left side - Avatar and ActionBtn */}
+        <div style={{
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          width: isDesktop ? "auto" : "100%",
+          order: isDesktop ? 1 : 2,
+          flexShrink: 0,
+        }}>
+          <Avatar/>
+          <ActionBtn />
+        </div>
+
+        {/* Right side - Image or Audio */}
+        <div style={{
+          width: isDesktop ? "auto" : "100%",
+          order: isDesktop ? 2 : 1,
+          flexShrink: 1,
+          minWidth: 0,
+        }}>
+          <Image/>
+          {/* {isDescribePhase ? (
+            <Image />
+            // <></>
+          ) : (
+            // <Image windowHeight={windowHeight} imageUrl={currentUnit.content} />
+
+  
+          )} */}
+        </div>
       </div>
 
-      {/* Right side - Image */}
-      <div style={{
-        width: isDesktop ? "auto" : "100%",
-        order: isDesktop ? 2 : 1,
-        flexShrink: 1,
-        minWidth: 0,
+      {/* Navigation buttons */}
+      {/* <div style={{
+        display: "flex",
+        gap: "10px",
+        marginTop: "20px",
       }}>
-        <Image windowHeight={windowHeight} />
+        <button
+          onClick={handlePreviousUnit}
+          disabled={currentUnitIndex === 0}
+          style={{
+            padding: "10px 20px",
+            borderRadius: "10px",
+            border: "2px solid #aa3bff",
+            backgroundColor: currentUnitIndex === 0 ? "#ccc" : "white",
+            color: "#aa3bff",
+            cursor: currentUnitIndex === 0 ? "not-allowed" : "pointer",
+            fontSize: "16px",
+            fontWeight: "500",
+          }}
+        >
+          ← Previous
+        </button>
+        <button
+          onClick={handleNextUnit}
+          style={{
+            padding: "10px 20px",
+            borderRadius: "10px",
+            border: "2px solid #aa3bff",
+            backgroundColor: "#aa3bff",
+            color: "white",
+            cursor: "pointer",
+            fontSize: "16px",
+            fontWeight: "500",
+          }}
+        >
+          {currentUnitIndex === (session.assignment.type === "speaking" ? session.assignment.units.length - 1 : 0) 
+            ? "Finish" 
+            : "Next →"}
+        </button>
       </div>
+    </div> */}
     </div>
   );
 }
 ## ending of file ./Describe.tsx ##
 
-## file number: 4
+## file number: 6
 ## starting ./Image.tsx ##
 import { defaultSetting, commonStyles } from "../../components/theme/default";
 import { useState, useEffect } from "react";
 import ProgressBar from "./ProgressBar";
+import { useAssignmentState, useIsDialog } from "../../context/AssignmentStateContext";
+import type { SpeakingAssignment } from "../../session/UserSession";
 
-interface ImageProps {
-  windowHeight: number;
-}
 
-export default function Image({ windowHeight }: ImageProps){
-    const [windowWidth, setWindowWidth] = useState(window.innerWidth);
-    const [isBlurred, setIsBlurred] = useState(true);
 
-    useEffect(() => {
-        const handleResize = () => setWindowWidth(window.innerWidth);
-        window.addEventListener('resize', handleResize);
-        return () => window.removeEventListener('resize', handleResize);
-    }, []);
-
-    const isDesktop = windowWidth > 800;
-    
+export default function Image(){
+    const {session,unitIndex} = useAssignmentState(); 
+    // const isDialog = useIsDialog(); 
     // Calculate max size based on viewport height
-    const maxImageSize = Math.min(
-        isDesktop ? 600 : 400,
-        windowHeight * 0.6 // 60% of viewport height
-    );
-
+    // let maxImageSize = Math.min(
+    //     window.innerWidth > 800 ? 600 : 400,
+    //     window.innerHeight * 0.6 // 60% of viewport height
+    // );
+    const maxImageSize = 580;
+    const assigment = session.assignment as SpeakingAssignment;
+    const unit = assigment.units[unitIndex];
+    const is_a_test = unit.id==="dialog_a"||unit.id==="dialog_b" || unitIndex > 6; 
+    const imageUrl = is_a_test?`${defaultSetting.base_icons}x_listening.png`:unit.content;
+  
+    // console.log({index:unitIndex,content:unit.content});
     return (
         <div style={{
             width: "100%",
@@ -196,9 +1034,9 @@ export default function Image({ windowHeight }: ImageProps){
             justifyContent: "center",
             alignItems: "center",
         }}
-        onClick={() => {
-            setIsBlurred(isBlurred ? false : true);
-        }}
+        // onClick={() => {
+        //     setIsBlurred(isBlurred ? false : true);
+        // }}
         >
             <div style={{
                 width: "100%",
@@ -209,7 +1047,8 @@ export default function Image({ windowHeight }: ImageProps){
                 alignItems: "center",
             }}>
                 <img 
-                    src={`${defaultSetting.base_bank}0.jpg`}
+                    key={unitIndex}
+                    src={imageUrl}
                     style={{
                         width: "100%",
                         maxWidth: maxImageSize,
@@ -219,7 +1058,7 @@ export default function Image({ windowHeight }: ImageProps){
                         border: `solid 2px ${commonStyles.white}`,
                         borderRadius: "22px",
                         boxShadow: "0 4px 8px rgba(0, 0, 0, 0.2)",
-                        filter: isBlurred ? "blur(8px)" : "blur(0px)",
+                        filter: false ? "blur(8px)" : "blur(0px)",
                         transition: "filter 0.5s ease-in-out",
                         WebkitTransition: "filter 0.5s ease-in-out",
                         MozTransition: "filter 0.5s ease-in-out",
@@ -232,78 +1071,128 @@ export default function Image({ windowHeight }: ImageProps){
 }
 ## ending of file ./Image.tsx ##
 
-## file number: 5
+## file number: 7
 ## starting ./Message.tsx ##
 import { useState, useEffect, useRef } from "react";
 import { commonStyles } from "../../components/theme/default";
+import { useAssignmentState, useIsDialog } from "../../context/AssignmentStateContext";
+import {
+    AssignmentType,
+    SpeakingPhase,
+    type SpeakingUnit,
+} from "../../session/UserSession";
 
-export default function Message(){
-    const [timeLeft, setTimeLeft] = useState(60);
-    const [windowWidth, setWindowWidth] = useState(window.innerWidth);
-    const [windowHeight, setWindowHeight] = useState(window.innerHeight);
-    const [showScrollIndicator, setShowScrollIndicator] = useState(false);
-    const contentRef = useRef<HTMLDivElement>(null);
-    const totalTime = 20;
-    const percentage = 5;
-
-    const isDesktop = windowWidth > 800;
-    
-    const maxContentHeight = isDesktop 
-        ? Math.min(windowHeight * 0.4, 300)
-        : 55;// 80 default
-
+// --- single shared resize hook; move to hooks/useWindowSize.ts ---
+function useWindowSize() {
+    const [size, setSize] = useState({
+        width: window.innerWidth,
+        height: window.innerHeight,
+    });
     useEffect(() => {
-        const handleResize = () => {
-            setWindowWidth(window.innerWidth);
-            setWindowHeight(window.innerHeight);
-        };
-        window.addEventListener('resize', handleResize);
-        return () => window.removeEventListener('resize', handleResize);
+        const onResize = () =>
+            setSize({ width: window.innerWidth, height: window.innerHeight });
+        window.addEventListener("resize", onResize);
+        return () => window.removeEventListener("resize", onResize);
     }, []);
+    return size;
+}
 
+function normalizeSentence(input?: string | string[]): string[] {
+    if (!input) return [];
+    return Array.isArray(input) ? input : [input];
+}
+
+export default function Message() {
+    const { message_note,session, unitIndex, timeElapsed, maxTimePerAnswer ,timer_current,timer_started} = useAssignmentState();
+    const { width: windowWidth, height: windowHeight } = useWindowSize();
+
+    const [showScrollIndicator, setShowScrollIndicator] = useState(false);
+    const isDialog = useIsDialog();
+    const contentRef = useRef<HTMLDivElement>(null);
+
+    // --- narrow assignment/unit safely ---
+    const assignment = session.assignment;
+    const isSpeaking = assignment.type === AssignmentType.speaking;
+    const unit: SpeakingUnit | null = isSpeaking
+        ? assignment.units[unitIndex] ?? null
+        : null;
+
+    // --- derive content flags ---
+    const isTestUnit = unit?.id === "dialog_a" || unit?.id === "dialog_b";
+    const isDescribe = unit?.phase === SpeakingPhase.describe_image;
+    const showHelpful = isTestUnit || isDescribe;
+    const lines = showHelpful ? normalizeSentence(unit?.helpful_sentence) : [];
+
+    // --- layout ---
+    const isDesktop = windowWidth > 800;
+    const maxContentHeight = isDesktop
+        ? Math.min(windowHeight * 0.4, 300)
+        : 90;
+
+    // timer ring
+const remaining = Math.max(0, timer_current);
+const ringPercent = 100 - Math.floor((remaining / timer_started) * 100) ;
+ 
+
+// console.log({remain:remaining,porcent:ringPercent})
+    // --- scroll indicator ---
     useEffect(() => {
-        const element = contentRef.current;
-        if (element) {
-            const hasOverflow = element.scrollHeight > element.clientHeight;
-            setShowScrollIndicator(hasOverflow);
-        }
-    }, [maxContentHeight]);
+        const el = contentRef.current;
+        if (!el) return;
+        const hasOverflow = el.scrollHeight > el.clientHeight;
+        setShowScrollIndicator(hasOverflow);
+    }, [maxContentHeight, lines.join("|")]);
 
     const handleScroll = () => {
-        const element = contentRef.current;
-        if (element) {
-            const isAtBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 5;
-            const hasOverflow = element.scrollHeight > element.clientHeight;
-            setShowScrollIndicator(hasOverflow && !isAtBottom);
-        }
+        const el = contentRef.current;
+        if (!el) return;
+        const isAtBottom =
+            el.scrollHeight - el.scrollTop - el.clientHeight < 5;
+        const hasOverflow = el.scrollHeight > el.clientHeight;
+        setShowScrollIndicator(hasOverflow && !isAtBottom);
     };
 
+    // --- render guard ---
+    // if (!unit) {
+    //     return null;
+    // }
+    // if (!showHelpful || lines.length === 0) {
+    //     return null;
+    // }
+
     return (
-        <div style={{
-            position: "relative",
-            backgroundColor: commonStyles.purple,
-            borderRadius: "15px",
-            padding: "12px 15px",
-            maxWidth: "350px",
-            display: "flex",
-            alignItems: "center",
-            gap: "10px",
-        }}>
-            {/* Triangle spike */}
-            <div style={{
-                position: "absolute",
-                bottom: "-10px",
-                left: "50%",
-                transform: "translateX(-50%)",
-                width: 0,
-                height: 0,
-                borderLeft: "10px solid transparent",
-                borderRight: "10px solid transparent",
-                borderTop: `10px solid ${commonStyles.purple}`,
-            }} />
-            
-            {/* Content area */}
-            <div 
+        <div
+            className="page-transition"
+            style={{
+                position: "relative",
+                backgroundColor: commonStyles.purple,
+                borderRadius: "15px",
+                padding: "12px 15px",
+                // left-aligned, wider on desktop
+                width: isDesktop ? "min(520px, 60vw)" : "100%",
+                maxWidth: isDesktop ? 520 : 350,
+                display: "flex",
+                alignItems: "flex-start",
+                gap: "10px",
+                textAlign: "left",
+            }}
+        >
+            {/* speech bubble tail */}
+            <div
+                style={{
+                    position: "absolute",
+                    bottom: "-10px",
+                    left: "50%",
+                    transform: "translateX(-50%)",
+                    width: 0,
+                    height: 0,
+                    borderLeft: "10px solid transparent",
+                    borderRight: "10px solid transparent",
+                    borderTop: `10px solid ${commonStyles.purple}`,
+                }}
+            />
+
+            <div
                 ref={contentRef}
                 onScroll={handleScroll}
                 style={{
@@ -316,106 +1205,151 @@ export default function Message(){
                     paddingBottom: "10px",
                 }}
             >
-                <label style={{
-                    color: commonStyles.white,
-                    fontSize: commonStyles.button_fontSize,
-                    fontWeight: "bold",
-                    display: "block",
-                    marginBottom: "5px",
-                }}>
-                    Helpful sentences
+               <label
+                    style={{
+                        color: commonStyles.white,
+                        fontSize: commonStyles.button_fontSize,
+                        fontWeight: "bold",
+                        display: "block",
+                        marginBottom: "5px",
+                    }}
+                >
+                    {unitIndex > 6 || isDialog ? "Info" : "Helpful sentence"}
+                    {unitIndex > 6 ?`${message_note}`:""}
                 </label>
-                <ul style={{
-                    color: commonStyles.white,
-                    fontWeight: commonStyles.button_fontWeight,
-                    fontSize: commonStyles.button_fontSize,
-                    margin: 0,
-                    paddingLeft: "15px",
-                    lineHeight: "1.4",
-                }}>
-                    <li>The amazing view of the picture is stunning</li>
-                    <li>I can see a beautiful landscape with vibrant colors</li>
-                    <li>In the foreground, there appears to be an interesting subject</li>
+                {/* <div
+                     style={{
+                        color: commonStyles.white,
+                        fontWeight: commonStyles.button_fontWeight,
+                        fontSize: commonStyles.button_fontSize,
+                        margin: 0,
+                        paddingLeft: "15px",
+                        lineHeight: "1.4",
+                        textAlign: "left",
+                    }}
+                >
+
+                    {lines}
+                </div>                 */}
+                <ul
+                    className="page-transition"
+                    style={{
+                        color: commonStyles.white,
+                        fontWeight: commonStyles.button_fontWeight,
+                        fontSize: commonStyles.button_fontSize,
+                        margin: 0,
+                        paddingLeft: "15px",
+                        lineHeight: "1.4",
+                        textAlign: "left",
+                    }}
+                >
+                    {
+                        !isDialog && unitIndex < 6?(
+                            <>
+                        <li>Today, I will be describing the...</li>
+                        <li>The first image that I see, shows an illustration of the ...</li>
+                        <li>Also, the photo depicts...</li>
+                        <li>Lastly, the photo shows...</li>
+                        <li>The Landscape is characterized by...</li>
+                            </>
+                        ):
+                        lines
+                        
+                    }
+                    {
+                        unitIndex > 6?(
+                            <li>Speak as clear as you can after the audio...</li>
+                        ):""
+                    }
                 </ul>
             </div>
 
-            {/* Scroll indicator arrow - only when content overflows */}
             {showScrollIndicator && (
-                <div style={{
-                    position: "absolute",
-                    right: "10px",
-                    bottom: "15px",
-                    pointerEvents: "none",
-                }}>
-                    <span style={{
-                        color: commonStyles.white,
-                        fontSize: "12px",
-                        opacity: 0.8,
-                    }}>
+                <div
+                    style={{
+                        position: "absolute",
+                        right: "10px",
+                        bottom: "15px",
+                        pointerEvents: "none",
+                    }}
+                >
+                    <span style={{ color: commonStyles.white, fontSize: "12px", opacity: 0.8 }}>
                         ▼
                     </span>
                 </div>
             )}
 
-            {/* Timer circle */}
-            <div style={{
-                width: "40px",
-                height: "40px",
-                borderRadius: "50%",
-                background: `conic-gradient(${commonStyles.faded_purple} ${percentage}%, ${commonStyles.white} ${percentage}%)`,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                position: "relative",
-                flexShrink: 0,
-            }}>
-                <div style={{
-                    width: "32px",
-                    height: "32px",
-                    borderRadius: "50%",
-                    backgroundColor: commonStyles.purple,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                }}>
-                    <span style={{
-                        color: commonStyles.white,
-                        fontSize: "12px",
-                        fontWeight: "bold",
-                    }}>
-                        {timeLeft}
-                    </span>
+            {/* timer ring */}
+            {!isDialog && (
+                <div
+                 style={{
+            width: "84px",
+            height: "84px",
+            borderRadius: "50%",
+            background: `conic-gradient(${commonStyles.faded_purple} ${ringPercent}%, ${commonStyles.white} ${ringPercent}%)`,
+            display:"flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flexShrink: 0,
+            alignSelf: "center",
+        }}
+                >
+                    <div
+                        style={{
+                            width: "50px",
+                            height: "50px",
+                            borderRadius: "50%",
+                            backgroundColor: commonStyles.purple,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                        }}
+                    >
+                        <span
+                            style={{
+                                color: commonStyles.white,
+                                fontSize: commonStyles.button_fontSize,
+                                fontWeight: commonStyles.button_fontWeight,
+                            }}
+                        >
+                            {remaining}s
+                        </span>
+                    </div>
                 </div>
-            </div>
+            )}
+
         </div>
-    )
+    );
 }
 ## ending of file ./Message.tsx ##
 
-## file number: 6
+## file number: 8
 ## starting ./ProgressBar.tsx ##
 import { useState } from "react";
 import { commonStyles } from "../../components/theme/default";
+import { useAssignmentState } from "../../context/AssignmentStateContext";
+import type { SpeakingAssignment, SpeakingUnit } from "../../session/UserSession";
 
 export default function ProgressBar(){
-    const [progress, setProgress] = useState(0);
-    const [isDragging, setIsDragging] = useState(false);
-    const total = 10;
+   
+    const {session,unitIndex} = useAssignmentState(); 
+    const assigment = session.assignment as SpeakingAssignment; 
+    const units = assigment.units as SpeakingUnit[] ; 
+    // const handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    //     const rect = e.currentTarget.getBoundingClientRect();
+    //     const x = e.clientX - rect.left;
+    //     const percentage = (x / rect.width) * 100;
+    //     setProgress(Math.min(100, Math.max(0, percentage)));
+    // };
 
-    const handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
-        const rect = e.currentTarget.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const percentage = (x / rect.width) * 100;
-        setProgress(Math.min(100, Math.max(0, percentage)));
-    };
-
-    const handleDrag = (e: React.MouseEvent<HTMLDivElement>) => {
-        if (isDragging) {
-            handleClick(e);
-        }
-    };
-
-    const currentValue = Math.round((progress / 100) * total);
+    // const handleDrag = (e: React.MouseEvent<HTMLDivElement>) => {
+    //     if (isDragging) {
+    //         handleClick(e);
+    //     }
+    // };
+    const total = units.length; 
+    const currentValue = unitIndex + 1; 
+    const progress = total > 0 ? (currentValue / total) * 100 : 0;
 
     return (
         <div style={{
@@ -446,13 +1380,13 @@ export default function ProgressBar(){
                 </label>
             </div>
             <div
-                onMouseDown={(e) => {
-                    setIsDragging(true);
-                    handleClick(e);
-                }}
-                onMouseMove={handleDrag}
-                onMouseUp={() => setIsDragging(false)}
-                onMouseLeave={() => setIsDragging(false)}
+                // onMouseDown={(e) => {
+                //     setIsDragging(true);
+                //     handleClick(e);
+                // }}
+                // onMouseMove={handleDrag}
+                // onMouseUp={() => setIsDragging(false)}
+                // onMouseLeave={() => setIsDragging(false)}
                 style={{
                     width: "100%",
                     height: "20px",
@@ -468,7 +1402,7 @@ export default function ProgressBar(){
                     height: "100%",
                     backgroundColor: commonStyles.purple,
                     borderRadius: "10px",
-                    transition: isDragging ? "none" : "width 0.3s ease",
+                    // transition: isDragging ? "none" : "width 0.3s ease",
                 }} />
             </div>
         </div>
@@ -476,7 +1410,7 @@ export default function ProgressBar(){
 }
 ## ending of file ./ProgressBar.tsx ##
 
-## file number: 7
+## file number: 9
 ## starting ./tools.tsx ##
 import { useState, useEffect } from "react";
 

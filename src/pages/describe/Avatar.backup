@@ -1,0 +1,273 @@
+`
+import { useEffect, useRef, useState } from "react";
+import Message from "./Message";
+import { defaultSetting } from "../../components/theme/default";
+// import { playAudio } from "./media/scripts";
+import { useAssignmentState, useUpdateAssignment } from "../../context/AssignmentStateContext";
+import type { SpeakingAssignment, SpeakingUnit } from "../../session/UserSession";
+import Audio from "./Audio";
+
+export default function Avatar() {
+
+    const [bot, setBot] = useState<string>(`${defaultSetting.base_bot}bot.svg`);
+    const update = useUpdateAssignment();
+    const { isTicking,isListening,answer_state, session, unitIndex, answer_saved, completed ,isPlaying} = useAssignmentState();
+    const [audioFile, setAudio] = useState<string>(null); //`${defaultSetting.base_dialogs}test.mp3`;
+    // const [isTicking, setTickState] = useState(false);
+    // const [isListening, setListenState] = useState(false);
+    const LISTENING_TIMER = defaultSetting.think_about_listening;//20; 
+
+
+    const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    // const unitIndexRef = useRef(unitIndex);
+    // unitIndexRef.current = unitIndex;
+
+    async function CountDown() {
+        // kill ANY previous interval before starting a new one
+        if (timerRef.current !== null) {
+            clearInterval(timerRef.current);
+            timerRef.current = null;
+        }
+        if (isTicking === true) {
+            return;
+        }
+        // setTickState(true);
+        // setListenState(true);
+
+        // setStart(true);
+        // setButtonColor(commonStyles.faded_purple);
+        // setButtonLabel("In Progress...");
+        // console.log({index:unitIndex,state:answer_state});
+        update({
+            timer_current: LISTENING_TIMER,
+            timer_started: LISTENING_TIMER,
+            label_message: "Wait for the timer to talk...",
+            isTicking: true,
+        });
+
+        // const assigment = session.assignment as SpeakingAssignment;
+        // const units = assigment.units as SpeakingUnit[];
+
+        timerRef.current = setInterval(() => {
+            update((prev) => {
+                if (prev.timer_current > 0) {
+                    return { timer_current: prev.timer_current - 1 };
+                }
+                clearInterval(timerRef.current);
+                timerRef.current = null;
+                return { 
+                    is_recording: true,
+                    answer_saved: false,
+                    isTicking: false, 
+                    isListening: true,
+                };
+            });
+        }, 1000);
+    }
+
+
+
+    // initial audio 
+    useEffect(() => {
+        // update({ label_message: "Listen to the bot." })
+        // setTimeout(() => {
+        //     // update({label_message:"Listen to the bot."})
+        //     setPlayState(true);
+        //     playAudio(audioRef);
+        // }, 1000);
+
+        /*
+            When the lesson starts this says the first audio.
+
+            During testing this just passes the values updated 
+            to the one incharge of starting the first audio.
+        */
+        if(unitIndex === 0){
+            const assigment = session.assignment as SpeakingAssignment;
+            const units = assigment.units as SpeakingUnit[];
+            const index = 6; 
+            const content = units[index].content;
+            // setPlayState(true); 
+            update({
+                label_message: "Listen to the bot.",
+                unitIndex: index,
+                answer_state: 5,
+                audio_file: content,
+                isPlaying:false,
+            })
+        }
+    }, []);
+
+    // function resetAudioContent(){
+    //       update((prev)=>{
+    //         const assigment = prev.session.assignment as SpeakingAssignment;
+    //         const units = assigment.units as SpeakingUnit[];
+    //         const content = units[prev.unitIndex].content; 
+    //         setAudioPath(content);
+    //         return prev; 
+    //       });
+    // }
+    // useEffect(() => {
+
+    // }, [isPlaying]);
+    useEffect(() => {
+        if (answer_state === 5 && unitIndex === 6) {
+            setTimeout(() => {
+                update((prev)=>{
+                    // console.log(prev);
+                    const assigment = session.assignment as SpeakingAssignment;
+                    const units = assigment.units as SpeakingUnit[];
+                    const index = prev.unitIndex;
+                    const content = units[index]?.content;
+                    // console.log({index,content});
+                    return { 
+                        label_message: "Listen to the bot.",
+                        unitIndex: index,
+                        audio_file: content,
+                        isPlaying: true,
+                    };
+                });
+                // update({ label_message: "Listen to the bot" });
+            }, 1000);
+            // console.log(session);
+
+        }
+    }, [answer_state,unitIndex]);
+
+    // when has to play next 
+    useEffect(() => {
+        console.log({unitIndex,isPlaying,isTicking,isListening});
+        if (unitIndex > 6 &&
+            isPlaying === false &&
+            isTicking === false &&
+            isListening === false) {
+            // resetAudioContent();
+            // setPlayState(true);
+            // const assigment = session.assignment as SpeakingAssignment;
+            // const units = assigment.units as SpeakingUnit[];
+            // const content = units[unitIndex]?.content;
+            // setAudio(content);
+            // playAudio(audioRef);
+            update((prev)=>{
+                const index = prev.unitIndex + 1; 
+                const assigment = prev.session.assignment as SpeakingAssignment;
+                const units = assigment.units as SpeakingUnit[];
+                const content = units[index]?.content;
+                return {
+                    audio_file: content,
+                    unitIndex: index,
+                    isPlaying: true,
+                }
+            });
+
+        }
+    }, [unitIndex, answer_saved,isPlaying,isTicking,isListening]);
+
+    // function reset() {
+    //     setListenState(false);
+    //     setTickState(false);
+    //     // setPlayState(false);
+    // }
+    // when completed 
+    useEffect(() => {
+        if (completed === true) {
+            update({isListening:false,isTicking:false}); 
+            // reset();
+            return;
+        }
+        if (answer_saved === true &&
+            unitIndex > 6 &&
+            (isListening === true ||
+                isTicking === true
+            )) {
+            // reset();
+            setTimeout(() => {
+                update((prev) => {
+                    // console.log(prev);
+                    // console.log({ audio: isPlaying, tick: isTicking, rec: isListening });
+                    return { answer_saved: false ,isPlaying: false};
+                });
+            }, 1000);
+
+        }
+    }, [answer_saved, unitIndex, completed]);
+    // console.log(audioPath);
+
+    function onEnded() {
+        // setPlayState(false); 
+        // update((prev)=>{
+        //    console.log(prev);
+        //     return {isPlaying:false}; 
+        // });
+        // during dialog B
+        update({isPlaying:false})
+        update((prev) => {
+            if(prev.unitIndex === 6){
+                const index = prev.unitIndex+1; 
+                const assigment = session.assignment as SpeakingAssignment;
+                const units = assigment.units as SpeakingUnit[];
+                const content = units[index].content;
+                // console.log(content); 
+                return { 
+                    unitIndex: index,
+                    audio_file: content,
+                    isPlaying: true,
+                };
+            }
+            return prev; 
+        });
+        
+        // before dialog B
+        // if (unitIndex < 6) {
+        //     setTimeout(() => {
+        //         // setPlayState(false);
+        //         update((prev) => {
+        //             const assigments = prev.session.assignment as SpeakingAssignment;
+        //             const units = assigments.units as SpeakingUnit[];
+        //             // console.log(prev);
+        //             if (prev.unitIndex < units.length) {
+        //                 const new_value = prev.unitIndex + 1;
+        //                 return { unitIndex: new_value , isPlaying:false};
+        //             }
+        //             return prev;
+        //         });
+        //     }, 1000);
+        // }
+    }
+    return (
+        <div style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            paddingTop: "8px",
+        }}>
+            <Message />
+
+            {/* invisible audio — no controls, nothing renders */}
+            <Audio
+                onEnded={onEnded}
+            />
+
+            <img
+                src={bot}
+                width={"140px"}
+                height={"140px"}
+                style={{ marginTop: "10px" }}
+            // onClick={() => { playAudio(audioRef) }}
+            />
+        </div>
+    );
+}
+
+
+/*
+
+                   
+
+              
+
+*/
+
+
+
+`
