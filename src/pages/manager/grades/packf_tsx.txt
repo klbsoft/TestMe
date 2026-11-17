@@ -1,0 +1,1234 @@
+## file number: 1
+## starting ./api.tsx ##
+import { defaultSetting, getToken } from "../../../components/theme/default";
+import { showToast } from "../../../components/toast/Toast";
+
+export interface AttemptRow {
+  id: string;
+  user: string;
+  code: string;
+  group: string;
+  attempt: number;
+  max_attempts: number; 
+  assigment_id: string;
+  assigment_label: string; 
+  assigment_type: string; 
+  grade: string; // "" = ungraded
+  window: number;
+  json: string; // the full assignment/answer blob for this attempt
+}
+
+/**
+ * POST /assigment/attempts
+ *
+ * - `token` empty            → toast the error, return the failure string.
+ * - network / parse failure  → toast the error, return the failure string.
+ * - `FAIL:...` from server   → toast the error, return the failure string.
+ * - `OK:[...]` from server   → return the parsed `AttemptRow[]`.
+ */
+export async function getAttempts(token: string): Promise<AttemptRow[] | string> {
+  if (!token) {
+    const msg = "FAIL:No session token";
+    showToast(msg);
+    return msg;
+  }
+
+  let text: string;
+  try {
+    const res = await fetch(`${defaultSetting.api_url}/assigment/attempts`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token }),
+    });
+    text = await res.text();
+  } catch (e) {
+    const msg = `FAIL:Network error: ${String(e)}`;
+    showToast(msg);
+    return msg;
+  }
+
+  if (!text.startsWith("OK:")) {
+    showToast(text);
+    return text.startsWith("FAIL:") ? text : `FAIL:${text}`;
+  }
+
+  try {
+    const rows = JSON.parse(text.slice(3)) as AttemptRow[];
+    console.log(rows);
+    return rows;
+  } catch (e) {
+    const msg = `FAIL:Invalid attempts payload: ${String(e)}`;
+    showToast(msg);
+    return msg;
+  }
+}
+
+
+
+// src/pages/manager/grades/api.ts — add this next to getAttempts
+
+/**
+ * POST /assigment/attempt/grade
+ *
+ * Body: { token, attempt, grade }
+ *   - `attempt` is the attempt id (the `id` field on AttemptRow)
+ *   - `grade` is "0".."4" or "" for ungraded
+ *
+ * Returns the server's raw response: `OK:...` or `FAIL:...`.
+ * Toasts any failure and returns it as a string so the caller can react.
+ */
+export async function gradeAttempt(
+  attemptId: string,
+  grade: string
+): Promise<string> {
+  const token = getToken();
+  if (!token) {
+    const msg = "FAIL:No session token";
+    showToast(msg);
+    return msg;
+  }
+
+  let text: string;
+  try {
+    const res = await fetch(
+      `${defaultSetting.api_url}/assigment/attempt/grade`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          token,
+          attempt: attemptId,
+          grade,
+        }),
+      }
+    );
+    text = await res.text();
+  } catch (e) {
+    const msg = `FAIL:Network error: ${String(e)}`;
+    showToast(msg);
+    return msg;
+  }
+
+  if (!text.startsWith("OK:")) {
+    showToast(text);
+    return text.startsWith("FAIL:") ? text : `FAIL:${text}`;
+  }
+
+  showToast("OK:Grade saved");
+  return text;
+}
+## ending of file ./api.tsx ##
+
+## file number: 2
+## starting ./AttemptStrip.tsx ##
+// src/pages/manager/grades/AttemptStrip.tsx
+import { commonStyles } from "../../../components/theme/default";
+
+export type AttemptState = "graded" | "ungraded" | "locked";
+
+export interface AttemptCell {
+  id: string;
+  attempt: number;
+  state: AttemptState;
+  currentAttempt: string; 
+}
+
+export default function AttemptStrip({
+  attempts,
+  value,
+  onChange,
+  currentAttempt,
+}: {
+  attempts: AttemptCell[];
+  value: number | null;
+  onChange: (attempt: number) => void;
+  currentAttempt: string; 
+}) {
+  if (attempts.length === 0) {
+    return (
+      <p
+        style={{
+          color: commonStyles.purple,
+          fontSize: commonStyles.button_fontSize,
+          opacity: 0.6,
+          margin: 0,
+        }}
+      >
+        No attempts yet.
+      </p>
+    );
+  }
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: "6px",
+      }}
+    >
+      <span
+        style={{
+          color: commonStyles.purple,
+          fontSize: "0.85em",
+          fontWeight: 600,
+          opacity: 0.8,
+        }}
+      >
+        Assignment: {currentAttempt}
+      </span>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+        {attempts.map((a) => {
+          const isSelected = a.attempt === value;
+          const isLocked = a.state === "locked";
+
+          const bg = isSelected
+            ? commonStyles.purple
+            : a.state === "graded"
+            ? commonStyles.clear_purple
+            : commonStyles.white;
+
+          const color = isSelected ? commonStyles.white : commonStyles.purple;
+
+          const border = isSelected
+            ? `2px solid ${commonStyles.purple}`
+            : a.state === "graded"
+            ? `2px solid ${commonStyles.clear_purple}`
+            : `2px solid ${commonStyles.faded_purple}`;
+
+          const opacity = isLocked && !isSelected ? 0.35 : 1;
+
+          return (
+            <button
+              key={a.id}
+              onClick={() => {
+                if (isLocked) return;
+                onChange(a.attempt);
+              }}
+              disabled={isLocked}
+              aria-label={`Attempt ${a.attempt}${isLocked ? " (locked)" : ""}`}
+              aria-pressed={isSelected}
+              style={{
+                width: "36px",
+                height: "36px",
+                borderRadius: "10px",
+                backgroundColor: bg,
+                color,
+                border,
+                cursor: isLocked ? "not-allowed" : "pointer",
+                fontSize: "14px",
+                fontWeight: isSelected ? "bold" : "normal",
+                opacity,
+                transition:
+                  "background-color 0.15s ease, border-color 0.15s ease, opacity 0.15s ease",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: 0,
+                fontFamily: "inherit",
+              }}
+            >
+              {a.attempt}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+## ending of file ./AttemptStrip.tsx ##
+
+## file number: 3
+## starting ./GradeStrip.tsx ##
+// src/pages/manager/grades/GradeStrip.tsx
+import { commonStyles } from "../../../components/theme/default";
+
+const GRADES = [0, 1, 2, 3, 4] as const;
+
+/**
+ * Row of 0-4 grade buttons. Same look-and-feel as AttemptStrip, but the
+ * label reads "General score" and the value is the overall grade for the
+ * attempt rather than an attempt index.
+ */
+export default function GradeStrip({
+  value,
+  onChange,
+}: {
+  value: number | null;
+  onChange: (grade: number) => void;
+}) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+      <span
+        style={{
+          color: commonStyles.purple,
+          fontSize: "0.85em",
+          fontWeight: 600,
+          opacity: 0.8,
+        }}
+      >
+        General score
+      </span>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+        {GRADES.map((n) => {
+          const active = n === value;
+          return (
+            <button
+              key={n}
+              onClick={() => onChange(n)}
+              aria-pressed={active}
+              style={{
+                width: "36px",
+                height: "36px",
+                borderRadius: "10px",
+                backgroundColor: active
+                  ? commonStyles.purple
+                  : commonStyles.white,
+                color: active ? commonStyles.white : commonStyles.purple,
+                border: active
+                  ? `2px solid ${commonStyles.purple}`
+                  : `2px solid ${commonStyles.faded_purple}`,
+                cursor: "pointer",
+                fontSize: "14px",
+                fontWeight: active ? "bold" : "normal",
+                transition:
+                  "background-color 0.15s ease, border-color 0.15s ease",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: 0,
+                fontFamily: "inherit",
+              }}
+            >
+              {n}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+## ending of file ./GradeStrip.tsx ##
+
+## file number: 4
+## starting ./Grades.tsx ##
+import { useEffect, useState } from "react";
+import { commonStyles, defaultSetting, getToken } from "../../../components/theme/default";
+import { GradesSelect } from "./Selector";
+import Students from "./Students";
+import StudentAssigment from "./StudentAssigment";
+import { getAttempts, type AttemptRow } from "./api";
+
+export default function Grades() {
+  const [selectedGroup, setSelectedGroup] = useState<string>("");
+  const [groupSize, setGroupSize] = useState<number>(0);
+
+  const [attempts, setAttempts] = useState<AttemptRow[]>([]);
+  const [selectedStudent, setSelectedStudent] = useState<string>("");
+
+  const handleGroupChange = (group: string) => {
+    setSelectedGroup(group);
+    setSelectedStudent("");
+  };
+
+  const [sizes, setSizes] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    const load = async () => {
+      const token = getToken();
+      if (!token) return;
+
+      try {
+        const res = await fetch(`${defaultSetting.api_url}/groups`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token }),
+        });
+        const text = await res.text();
+
+        if (text.startsWith("OK:")) {
+          const raw = JSON.parse(text.slice(3)) as { name: string; size: number }[];
+          const map: Record<string, number> = {};
+          for (const g of raw) map[g.name] = g.size;
+          setSizes(map);
+        }
+      } catch {
+        // ignore
+      }
+    };
+    load();
+  }, []);
+
+  useEffect(() => {
+    const token = getToken();
+    if (!token) return;
+
+    const load = async () => {
+      const result = await getAttempts(token);
+      // console.log(result);
+      if (Array.isArray(result)) {
+        setAttempts(result);
+      }
+    };
+    load();
+  }, []);
+
+  useEffect(() => {
+    setGroupSize(sizes[selectedGroup] ?? 0);
+  }, [selectedGroup, sizes]);
+
+  const students =
+    selectedGroup && groupSize > 0
+      ? Array.from({ length: groupSize }, (_, i) => `${selectedGroup}${i + 1}`)
+      : [];
+
+  return (
+    <div>
+      <h2
+        style={{
+          color: commonStyles.purple,
+          fontSize: commonStyles.button_fontSize,
+          fontWeight: commonStyles.button_fontWeight,
+        }}
+      >
+        <strong>Grade Groups</strong>
+      </h2>
+
+      <div
+        className="grades-container"
+        style={{
+          display: "flex",
+          gap: "1em",
+          alignItems: "flex-start",
+        }}
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: "1em" }}>
+          <GradesSelect onChange={handleGroupChange} />
+          <Students
+            students={students}
+            selected={selectedStudent}
+            onSelect={setSelectedStudent}
+          />
+        </div>
+
+        <StudentAssigment
+          studentCode={selectedStudent}
+          attempts={attempts}
+        />
+      </div>
+    </div>
+  );
+}
+## ending of file ./Grades.tsx ##
+
+## file number: 5
+## starting ./ScorePicker.tsx ##
+import { commonStyles } from "../../../components/theme/default";
+
+const SCORES = [0, 1, 2, 3, 4] as const;
+
+export default function ScorePicker({
+  value,
+  onChange,
+}: {
+  value: number | undefined;
+  onChange: (n: number) => void;
+}) {
+  return (
+    <div style={{ display: "flex", gap: "6px" }}>
+      {SCORES.map((n) => {
+        const active = n === value;
+        return (
+          <button
+            key={n}
+            onClick={() => onChange(n)}
+            aria-pressed={active}
+            style={{
+              width: "34px",
+              height: "34px",
+              borderRadius: "8px",
+              border: `2px solid ${
+                active ? commonStyles.purple : commonStyles.faded_purple
+              }`,
+              backgroundColor: active
+                ? commonStyles.purple
+                : commonStyles.white,
+              color: active ? commonStyles.white : commonStyles.purple,
+              fontSize: "14px",
+              fontWeight: active ? "bold" : "normal",
+              cursor: "pointer",
+              transition:
+                "background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease",
+              boxShadow: active
+                ? `0 0 0 3px ${commonStyles.faded_purple}`
+                : "none",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: 0,
+              fontFamily: "inherit",
+            }}
+          >
+            {n}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+## ending of file ./ScorePicker.tsx ##
+
+## file number: 6
+## starting ./Selector.tsx ##
+import { useEffect, useState } from "react";
+import { commonStyles, defaultSetting, getToken } from "../../../components/theme/default";
+
+const optionBase: React.CSSProperties = {
+  padding: "0.5em 1em",
+  color: commonStyles.purple,
+  background: commonStyles.white,
+  cursor: "pointer",
+  transition: "background-color 0.15s ease, color 0.15s ease",
+};
+
+type ServerGroup = { name: string; size: number };
+
+type Props = {
+  onChange?: (group: string) => void;
+};
+
+export function GradesSelect({ onChange }: Props) {
+  const [open, setOpen] = useState(false);
+  const [options, setOptions] = useState<ServerGroup[]>([]);
+  const [selected, setSelected] = useState<string>("");
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const load = async () => {
+      setLoading(true);
+
+      const token = getToken();
+      if (!token) {
+        setLoading(false);
+        return;
+      }
+
+      try {
+        const res = await fetch(`${defaultSetting.api_url}/groups`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token }),
+        });
+
+        const text = await res.text();
+
+        if (text.startsWith("OK:")) {
+          const raw = JSON.parse(text.slice(3)) as ServerGroup[];
+          setOptions(raw);
+          if (raw.length > 0) {
+            setSelected((prev) => prev || raw[0].name);
+          }
+        } else {
+          setOptions([]);
+        }
+      } catch {
+        setOptions([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    load();
+  }, []);
+
+  // notify parent whenever the selection changes (including default)
+  useEffect(() => {
+    if (selected) onChange?.(selected);
+  }, [selected]);
+
+  const selectedLabel =
+    options.find((o) => o.name === selected)?.name ?? "";
+
+  return (
+    <div
+      className="grades-container"
+      style={{
+        position: "relative",
+        display: "inline-block",
+        width: "clamp(140px, 30vw, 220px)",
+        fontFamily: "system-ui, sans-serif",
+        fontSize: commonStyles.button_fontSize,
+        fontWeight: commonStyles.button_fontWeight,
+      }}
+    >
+      <div
+        onClick={() => {
+          if (!loading && options.length > 0) setOpen((o) => !o);
+        }}
+        style={{
+          padding: "0.6em 1em",
+          color: commonStyles.purple,
+          background: commonStyles.white,
+          border: `2px solid ${
+            open ? commonStyles.clear_purple : commonStyles.faded_purple
+          }`,
+          boxShadow: open ? `0 0 0 3px ${commonStyles.faded_purple}` : "none",
+          borderRadius: "8px",
+          cursor: loading || options.length === 0 ? "not-allowed" : "pointer",
+          userSelect: "none",
+          opacity: loading ? 0.6 : 1,
+        }}
+      >
+        {loading ? "Loading…" : selectedLabel || "No groups"}
+      </div>
+
+      {open && options.length > 0 && (
+        <div
+          style={{
+            position: "absolute",
+            top: "calc(100% + 4px)",
+            left: 0,
+            right: 0,
+            background: commonStyles.white,
+            border: `2px solid ${commonStyles.faded_purple}`,
+            borderRadius: "8px",
+            overflow: "hidden",
+            zIndex: 10,
+          }}
+        >
+          {options.map((opt, i) => (
+            <div
+              key={opt.name}
+              style={{
+                ...optionBase,
+                borderTop:
+                  i === 0 ? "none" : `1px solid ${commonStyles.faded_purple}`,
+                ...(opt.name === selected
+                  ? { background: commonStyles.purple, color: commonStyles.white }
+                  : {}),
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = commonStyles.purple;
+                e.currentTarget.style.color = commonStyles.white;
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background =
+                  opt.name === selected ? commonStyles.purple : commonStyles.white;
+                e.currentTarget.style.color =
+                  opt.name === selected ? commonStyles.white : commonStyles.purple;
+              }}
+              onClick={() => {
+                setSelected(opt.name);
+                setOpen(false);
+              }}
+            >
+              {opt.name}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+## ending of file ./Selector.tsx ##
+
+## file number: 7
+## starting ./StudentAssigment.tsx ##
+// src/pages/manager/grades/StudentAssigment.tsx
+import { useEffect, useMemo, useState } from "react";
+import { commonStyles, getToken } from "../../../components/theme/default";
+import { type SpeakingUnit } from "../../../session/UserSession";
+import { showToast } from "../../../components/toast/Toast";
+import AttemptStrip, { type AttemptCell, type AttemptState } from "./AttemptStrip";
+import GradeStrip from "./GradeStrip";
+import UnitsList from "./UnitsList";
+import { gradeAttempt, type AttemptRow } from "./api";
+
+
+// ---------------------------------------------------------------------------
+// Resource hydration
+// ---------------------------------------------------------------------------
+
+async function fetchResourceBlob(
+  resourceUrl: string,
+  token: string
+): Promise<string | null> {
+  try {
+    const res = await fetch(resourceUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token }),
+    });
+    if (!res.ok) return null;
+    const ct = res.headers.get("content-type") ?? "";
+    if (ct.startsWith("text/")) return null;
+    const blob = await res.blob();
+    if (blob.size === 0) return null;
+    return URL.createObjectURL(blob);
+  } catch {
+    return null;
+  }
+}
+
+async function hydrateUnits(
+  units: SpeakingUnit[],
+  token: string
+): Promise<{ hydrated: SpeakingUnit[]; blobUrls: string[] }> {
+  const blobUrls: string[] = [];
+
+  const hydrated = await Promise.all(
+    units.map(async (unit) => {
+      const next: SpeakingUnit = { ...unit };
+
+      if (next.content) {
+        const blob = await fetchResourceBlob(next.content, token);
+        if (blob) {
+          blobUrls.push(blob);
+          next.content = blob;
+        }
+      }
+      if (next.answer) {
+        const blob = await fetchResourceBlob(next.answer, token);
+        if (blob) {
+          blobUrls.push(blob);
+          next.answer = blob;
+        }
+      }
+
+      return next;
+    })
+  );
+
+  return { hydrated, blobUrls };
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** The subset of units that UnitsList renders (and therefore grades). */
+function gradedUnitsOf(units: SpeakingUnit[]): SpeakingUnit[] {
+  const contentUnits = units.filter((u) => !u.id.startsWith("dialog_"));
+  const describeUnits = contentUnits
+    .filter((u) => u.phase === "describe_image")
+    .slice(0, 4);
+  const repeatUnits = contentUnits
+    .filter((u) => u.phase === "repeat_audio")
+    .slice(0, 4);
+  return describeUnits.length + repeatUnits.length > 0
+    ? [...describeUnits, ...repeatUnits]
+    : contentUnits.slice(0, 8);
+}
+
+// ---------------------------------------------------------------------------
+// Main component
+// ---------------------------------------------------------------------------
+
+export default function StudentAssigment({
+  studentCode,
+  attempts,
+}: {
+  studentCode: string;
+  attempts: AttemptRow[];
+}) {
+  const studentAttempts = useMemo(
+    () => attempts.filter((a) => a.code === studentCode),
+    [attempts, studentCode]
+  );
+
+  const activeAttempts = useMemo(
+    () => studentAttempts.slice().sort((a, b) => a.attempt - b.attempt),
+    [studentAttempts]
+  );
+
+const cells: AttemptCell[] = useMemo(
+  () =>
+    activeAttempts.map((a, i) => ({
+      id: a.id,
+      attempt: i + 1,
+      state: (a.grade !== "" ? "graded" : "ungraded") as AttemptState,
+      currentAttempt: a.assigment_label ?? "",
+    })),
+  [activeAttempts]
+);
+
+  const [selectedAttempt, setSelectedAttempt] = useState<number | null>(null);
+  const [scores, setScores] = useState<Record<string, number>>({});
+  const [generalScore, setGeneralScore] = useState<number | null>(null);
+
+  useEffect(() => {
+    setScores({});
+    setGeneralScore(null);
+    if (activeAttempts.length === 0) {
+      setSelectedAttempt(null);
+    } else {
+      setSelectedAttempt(activeAttempts.length);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [studentCode, activeAttempts.length]);
+
+  const currentRow = useMemo(() => {
+    if (selectedAttempt === null) return null;
+    return activeAttempts[selectedAttempt - 1] ?? null;
+  }, [activeAttempts, selectedAttempt]);
+
+  // seed generalScore from the stored grade on the current attempt
+  useEffect(() => {
+    if (!currentRow) {
+      setGeneralScore(null);
+      return;
+    }
+    const trimmed = currentRow.grade.trim();
+    setGeneralScore(trimmed === "" ? null : Number(trimmed));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentRow?.id]);
+
+  const rawUnits: SpeakingUnit[] = useMemo(() => {
+    if (!currentRow || !currentRow.json) return [];
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(currentRow.json);
+    } catch (e) {
+      showToast(`FAIL:Invalid attempt json: ${String(e)}`);
+      return [];
+    }
+
+    if (parsed && typeof parsed === "object") {
+      const obj = parsed as {
+        assignment?: { units?: SpeakingUnit[] };
+        units?: SpeakingUnit[];
+      };
+      if (Array.isArray(obj.assignment?.units)) return obj.assignment.units;
+      if (Array.isArray(obj.units)) return obj.units;
+    }
+
+    showToast("FAIL:Attempt json has no units");
+    return [];
+  }, [currentRow]);
+
+  const [units, setUnits] = useState<SpeakingUnit[]>([]);
+  const [hydrating, setHydrating] = useState(false);
+
+  useEffect(() => {
+    if (rawUnits.length === 0) {
+      setUnits([]);
+      return;
+    }
+
+    const token = getToken();
+    if (!token) {
+      showToast("FAIL:No session token");
+      return;
+    }
+
+    let cancelled = false;
+    let createdBlobs: string[] = [];
+
+    setHydrating(true);
+
+    (async () => {
+      const { hydrated, blobUrls } = await hydrateUnits(rawUnits, token);
+      if (cancelled) {
+        blobUrls.forEach((u) => URL.revokeObjectURL(u));
+        return;
+      }
+      createdBlobs = blobUrls;
+      setUnits(hydrated);
+      setHydrating(false);
+    })();
+
+    return () => {
+      cancelled = true;
+      setHydrating(false);
+      createdBlobs.forEach((u) => URL.revokeObjectURL(u));
+    };
+  }, [rawUnits]);
+
+// at the top of StudentAssigment.tsx
+
+// inside the component, next to the other handlers
+const handleSaveGrade = async () => {
+  if (!currentRow) return;
+  if (generalScore === null) {
+    showToast("FAIL:Pick a score first");
+    return;
+  }
+
+  const text = await gradeAttempt(currentRow.id, String(generalScore));
+  // text is "OK:..." or "FAIL:..." — gradeAttempt already toasted
+
+  if (text.startsWith("OK:")) {
+    // Reflect the change locally so the attempt strip turns "graded"
+    // and the currentRow's stored grade stays in sync if the teacher
+    // switches attempts and comes back.
+    // (The parent's `attempts` array is the source — see the note below.)
+  }
+};
+
+
+
+
+
+
+
+  // ── GENERAL → INDIVIDUAL: bulk fill every graded unit ─────────────
+  const handleGeneralScore = (grade: number) => {
+    setGeneralScore(grade);
+
+    const graded = gradedUnitsOf(units);
+    setScores((prev) => {
+      const next = { ...prev };
+      for (const u of graded) next[u.id] = grade;
+      return next;
+    });
+  };
+
+  // ── INDIVIDUAL → GENERAL: recompute the average ───────────────────
+ const setUnitScore = (unitId: string, score: number) => {
+  const next = { ...scores, [unitId]: score };
+  setScores(next);
+
+  const graded = gradedUnitsOf(units);
+  const values: number[] = [];
+  for (const u of graded) {
+    const v = next[u.id];
+    if (typeof v === "number") values.push(v);
+  }
+
+  if (values.length > 0) {
+    const avg = values.reduce((a, b) => a + b, 0) / values.length;
+    setGeneralScore(gradeFromAverage(avg));
+  }
+};
+
+function gradeFromAverage(avg: number): number {
+  if (avg >= 3.875) return 4;
+  if (avg >= 3.375) return 3;
+  if (avg >= 3.000) return 2;
+  return 1;
+}
+
+  return (
+    <div
+      style={{
+        width: "1200px",
+        background: commonStyles.white,
+        border: `2px solid ${commonStyles.faded_purple}`,
+        borderRadius: "8px",
+        padding: "1em",
+        fontFamily: "system-ui, sans-serif",
+        fontSize: commonStyles.button_fontSize,
+        fontWeight: commonStyles.button_fontWeight,
+        boxSizing: "border-box",
+        alignSelf: "flex-start",
+      }}
+    >
+      <h2 style={{ margin: 0, color: commonStyles.purple }}>
+        {studentCode || "No student selected"}
+      </h2>
+
+      {cells.length > 1 && (
+        <div style={{ margin: "0.75em 0" }}>
+          <AttemptStrip
+            attempts={cells}
+            value={selectedAttempt}
+            onChange={setSelectedAttempt}
+            currentAttempt={currentRow?.assigment_label}
+
+          />
+        </div>
+      )}
+
+      {currentRow && (
+        <div style={{
+            margin: "0.75em 0",
+            display: "flex",
+            alignItems: "flex-end",
+            gap: "0.75em",
+            flexWrap: "wrap", 
+            }}>
+          <GradeStrip value={generalScore} onChange={handleGeneralScore} />
+         <button
+            onClick={handleSaveGrade}
+            disabled={generalScore === null}
+            style={{
+                  marginLeft: "auto",
+              padding: "0.6em 1.4em",
+              border: `2px solid ${commonStyles.purple}`,
+              borderRadius: "10px",
+              backgroundColor:
+                generalScore === null
+                  ? commonStyles.faded_purple
+                  : commonStyles.purple,
+              color: commonStyles.white,
+              fontSize: commonStyles.button_fontSize,
+              fontWeight: commonStyles.button_fontWeight,
+              cursor: generalScore === null ? "not-allowed" : "pointer",
+              transition: "background-color 0.15s ease",
+              boxSizing: "border-box",
+              lineHeight: 1.2,
+              whiteSpace: "nowrap",
+            }}
+          >
+            Save grade
+          </button>
+        </div>
+      )}
+
+      {!studentCode ? (
+        <p
+          style={{
+            color: commonStyles.purple,
+            opacity: 0.6,
+            fontSize: commonStyles.button_fontSize,
+          }}
+        >
+          Select a student to grade.
+        </p>
+      ) : activeAttempts.length === 0 ? (
+        <p
+          style={{
+            color: commonStyles.purple,
+            opacity: 0.6,
+            fontSize: commonStyles.button_fontSize,
+          }}
+        >
+          This student has no attempts yet.
+        </p>
+      ) : rawUnits.length === 0 ? (
+        <p
+          style={{
+            color: commonStyles.purple,
+            opacity: 0.6,
+            fontSize: commonStyles.button_fontSize,
+          }}
+        >
+          This attempt has no recorded units.
+        </p>
+      ) : hydrating ? (
+        <p
+          style={{
+            color: commonStyles.purple,
+            opacity: 0.6,
+            fontSize: commonStyles.button_fontSize,
+          }}
+        >
+          Loading media…
+        </p>
+      ) : (
+        <UnitsList units={units} scores={scores} onScore={setUnitScore} />
+      )}
+    </div>
+  );
+}
+## ending of file ./StudentAssigment.tsx ##
+
+## file number: 8
+## starting ./Students.tsx ##
+import { useState } from "react";
+import { commonStyles } from "../../../components/theme/default";
+
+type Props = {
+  students: string[];
+  selected: string;
+  onSelect: (code: string) => void;
+};
+
+export default function Students({ students, selected, onSelect }: Props) {
+  const [hovered, setHovered] = useState<string | null>(null);
+
+  return (
+    <div
+      style={{
+        fontFamily: "system-ui, sans-serif",
+        fontSize: commonStyles.button_fontSize,
+        fontWeight: commonStyles.button_fontWeight,
+        paddingTop: "1.5em",
+      }}
+    >
+      <ul
+        style={{
+          listStyle: "none",
+          margin: 0,
+          padding: 0,
+          border: `2px solid ${commonStyles.faded_purple}`,
+          borderRadius: "8px",
+          overflow: "hidden",
+          background: commonStyles.white,
+          display: "inline-block",
+          minWidth: "clamp(140px, 30vw, 220px)",
+        }}
+      >
+        {students.length === 0 && (
+          <li style={{ padding: "0.5em 1em", color: commonStyles.purple, opacity: 0.6 }}>
+            No students
+          </li>
+        )}
+
+        {students.map((code, i) => {
+          const isSelected = code === selected;
+          const isHovered = code === hovered;
+          const highlight = isSelected || isHovered;
+
+          return (
+            <li
+              key={code}
+              onClick={() => onSelect(code)}
+              onMouseEnter={() => setHovered(code)}
+              onMouseLeave={() => setHovered(null)}
+              style={{
+                padding: "0.5em 1em",
+                cursor: "pointer",
+                color: highlight ? commonStyles.white : commonStyles.purple,
+                background: highlight ? commonStyles.purple : commonStyles.white,
+                borderTop: i === 0 ? "none" : `1px solid ${commonStyles.faded_purple}`,
+                fontWeight: isSelected ? "bold" : "normal",
+                transition: "background-color 0.15s ease, color 0.15s ease",
+              }}
+            >
+              {code}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+## ending of file ./Students.tsx ##
+
+## file number: 9
+## starting ./UnitsList.tsx ##
+import { commonStyles } from "../../../components/theme/default";
+import { type SpeakingUnit } from "../../../session/UserSession";
+import ScorePicker from "./ScorePicker";
+
+export default function UnitsList({
+  units,
+  scores,
+  onScore,
+}: {
+  units: SpeakingUnit[];
+  scores: Record<string, number>;
+  onScore: (unitId: string, score: number) => void;
+}) {
+  const contentUnits = units.filter((u) => !u.id.startsWith("dialog_"));
+
+  const describeUnits = contentUnits
+    .filter((u) => u.phase === "describe_image")
+    .slice(0, 4);
+
+  const repeatUnits = contentUnits
+    .filter((u) => u.phase === "repeat_audio")
+    .slice(0, 4);
+
+  const displayUnits =
+    describeUnits.length + repeatUnits.length > 0
+      ? [...describeUnits, ...repeatUnits]
+      : contentUnits.slice(0, 8);
+
+  return (
+    <>
+      {displayUnits.map((unit) => {
+        const isDescribe = unit.phase === "describe_image";
+
+        return (
+          <div
+            key={unit.id}
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: "0.75em",
+              padding: "0.75em 1em",
+              border: `1px solid ${commonStyles.faded_purple}`,
+              borderRadius: "6px",
+              color: commonStyles.purple,
+              fontSize: commonStyles.button_fontSize,
+              fontWeight: commonStyles.button_fontWeight,
+              marginBottom: "0.5em",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                gap: "1em",
+                alignItems: "center",
+                justifyContent: "space-between",
+              }}
+            >
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div
+                  style={{
+                    fontSize: "0.85em",
+                    opacity: 0.8,
+                    marginBottom: 4,
+                  }}
+                >
+                  Student Answer
+                </div>
+                <audio
+                  controls
+                  src={unit.answer ?? undefined}
+                  style={{ width: "100%" }}
+                />
+              </div>
+
+              <div style={{ flex: 1, minWidth: 0 }}>
+                {isDescribe ? (
+                  <img
+                    src={unit.content}
+                    alt={unit.id}
+                    style={{
+                      width: "70%",
+                      height: "70%",
+                      objectFit: "cover",
+                      borderRadius: 6,
+                      border: `1px solid ${commonStyles.faded_purple}`,
+                      marginLeft: "30%",
+                      display: "block",
+                    }}
+                  />
+                ) : (
+                  <>
+                    <div
+                      style={{
+                        fontSize: "0.85em",
+                        opacity: 0.8,
+                        marginBottom: 4,
+                      }}
+                    >
+                      Prompt Audio
+                    </div>
+                    <audio
+                      controls
+                      src={unit.content ?? undefined}
+                      style={{ width: "100%" }}
+                    />
+                  </>
+                )}
+              </div>
+            </div>
+
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "0.75em",
+                borderTop: `1px solid ${commonStyles.faded_purple}`,
+                paddingTop: "0.75em",
+              }}
+            >
+              <span style={{ fontSize: "0.85em", opacity: 0.8 }}>Score</span>
+              <ScorePicker
+                value={scores[unit.id]}
+                onChange={(n) => onScore(unit.id, n)}
+              />
+            </div>
+          </div>
+        );
+      })}
+    </>
+  );
+}
+## ending of file ./UnitsList.tsx ##
+

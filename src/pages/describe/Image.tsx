@@ -8,6 +8,7 @@ import type { SpeakingAssignment } from "../../session/UserSession";
 
 export default function Image(){
     const {session,unitIndex} = useAssignmentState(); 
+    const isDialog = useIsDialog(); 
     // const isDialog = useIsDialog(); 
     // Calculate max size based on viewport height
     // let maxImageSize = Math.min(
@@ -17,7 +18,7 @@ export default function Image(){
     const maxImageSize = 580;
     const assigment = session.assignment as SpeakingAssignment;
     const unit = assigment.units[unitIndex];
-    const is_a_test = unit.id==="dialog_a"||unit.id==="dialog_b" || unitIndex > 6; 
+    const is_a_test = isDialog || unitIndex > 6; 
     const imageUrl = is_a_test?`${defaultSetting.base_icons}x_listening.png`:unit.content;
   
     // console.log({index:unitIndex,content:unit.content});
@@ -41,6 +42,8 @@ export default function Image(){
                 alignItems: "center",
             }}>
                 <img 
+                    onContextMenu={(e) => e.preventDefault()}
+                    onDragStart={(e) => e.preventDefault()}
                     key={unitIndex}
                     src={imageUrl}
                     style={{

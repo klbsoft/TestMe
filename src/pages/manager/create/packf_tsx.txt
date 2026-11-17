@@ -1,0 +1,439 @@
+## file number: 1
+## starting ./Create.tsx ##
+import { useEffect, useMemo, useState } from "react";
+import { commonStyles } from "../../../components/theme/default";
+import { submitAssignment, type SubmitMeta } from "./api";
+import { initialState, type AssignmentKind, type DraftUnit } from "./types";
+import UnitEditor from "./UnitEditor";
+import { showToast } from "../../../components/toast/Toast";
+import { inputStyle, labelStyle } from "./styles";
+
+const KIND_OPTIONS: { value: AssignmentKind; label: string }[] = [
+  { value: "speaking", label: "Speaking" },
+  { value: "listening", label: "Listening" },
+  { value: "writing", label: "Writing" },
+];
+
+export default function Create() {
+  const [units, setUnits] = useState<DraftUnit[]>(initialState);
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+
+  // ── NEW: assignment rules ──────────────────────────────────────────
+  const [label, setLabel] = useState("");
+  const [kind, setKind] = useState<AssignmentKind>("speaking");
+  const [maxAttempts, setMaxAttempts] = useState(1);
+
+  const update = (id: string, patch: Partial<DraftUnit>) =>
+    setUnits((prev) => prev.map((u) => (u.id === id ? { ...u, ...patch } : u)));
+
+  useEffect(() => {
+    if (status !== null) {
+      showToast(status);
+    }
+  }, [status]);
+
+  useMemo(() => {
+    return () => {
+      units.forEach((u) => u.contentPreview && URL.revokeObjectURL(u.contentPreview));
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const buildAssignment = async () => {
+    if (!label.trim()) {
+      setStatus("FAIL:Label is required");
+      return;
+    }
+    if (maxAttempts < 1) {
+      setStatus("FAIL:Max attempts must be at least 1");
+      return;
+    }
+
+    setSaving(true);
+    setStatus(null);
+
+    const meta: SubmitMeta = {
+      label: label.trim(),
+      kind,
+      maxAttempts,
+    };
+
+    try {
+      const text = await submitAssignment(units, meta);
+
+      if (text.startsWith("OK:")) {
+        setStatus(`OK:${text.slice(3)}`);
+        // setUnits((prev) => prev.map((u) => ({ ...u, contentFile: undefined })));
+      } else if (text.startsWith("FAIL:")) {
+        setStatus(`FAIL:${text.slice(5)}`);
+      } else {
+        setStatus(`FAIL:Unexpected: ${text}`);
+      }
+    } catch (e) {
+      setStatus(`FAIL:Network error: ${(e as Error).message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div
+      style={{
+        fontFamily: "system-ui, sans-serif",
+        fontSize: commonStyles.button_fontSize,
+        fontWeight: commonStyles.button_fontWeight,
+      }}
+    >
+      <h2
+        style={{
+          color: commonStyles.purple,
+          fontSize: commonStyles.button_fontSize,
+          fontWeight: commonStyles.button_fontWeight,
+          marginBottom: "20px",
+        }}
+      >
+        <strong>Create</strong>
+      </h2>
+
+      <div
+        style={{
+          border: `2px solid ${commonStyles.faded_purple}`,
+          borderRadius: "8px",
+          padding: "1em",
+          background: commonStyles.white,
+        }}
+      >
+        {/* ── ASSIGNMENT RULES ─────────────────────────────────────── */}
+        <div
+          style={{
+            display: "flex",
+            gap: "0.75em",
+            flexWrap: "wrap",
+            marginBottom: "1.25em",
+          }}
+        >
+          <div style={{ flex: "1 1 260px" }}>
+            <label style={labelStyle}>Label</label>
+            <input
+              type="text"
+              style={inputStyle}
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              placeholder="e.g. Talking about nature."
+            />
+          </div>
+
+          <div style={{ flex: "0 0 180px" }}>
+            <label style={labelStyle}>Assignment type</label>
+            <select
+              style={inputStyle}
+              value={kind}
+              onChange={(e) => setKind(e.target.value as AssignmentKind)}
+            >
+              {KIND_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div style={{ flex: "0 0 140px" }}>
+            <label style={labelStyle}>Max attempts</label>
+            <input
+              type="number"
+              min={1}
+              style={inputStyle}
+              value={maxAttempts}
+              onChange={(e) => setMaxAttempts(Number(e.target.value))}
+            />
+          </div>
+        </div>
+
+        <h3 style={{ margin: "0 0 0.5em", color: commonStyles.purple }}>Describe image</h3>
+        {units.filter((u) => u.phase === "describe_image").map((unit) => (
+          <UnitEditor key={unit.id} unit={unit} onUpdate={update} />
+        ))}
+
+        <h3 style={{ margin: "1em 0 0.5em", color: commonStyles.purple }}>Repeat audio</h3>
+        {units.filter((u) => u.phase === "repeat_audio").map((unit) => (
+          <UnitEditor key={unit.id} unit={unit} onUpdate={update} />
+        ))}
+
+        <div
+          style={{
+            marginTop: "1.25em",
+            display: "flex",
+            justifyContent: "flex-end",
+            gap: "0.75em",
+          }}
+        >
+          <button
+            type="button"
+            onClick={buildAssignment}
+            disabled={saving}
+            style={{
+              padding: "0.6em 1.4em",
+              border: `1px solid ${commonStyles.purple}`,
+              borderRadius: 6,
+              cursor: saving ? "not-allowed" : "pointer",
+              fontSize: commonStyles.button_fontSize,
+              fontWeight: commonStyles.button_fontWeight,
+              color: commonStyles.white,
+              background: saving ? commonStyles.faded_purple : commonStyles.purple,
+            }}
+          >
+            {saving ? "Saving…" : "Build assignment"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+## ending of file ./Create.tsx ##
+
+## file number: 2
+## starting ./MediaField.tsx ##
+import { useRef, useState } from "react";
+import { commonStyles } from "../../../components/theme/default";
+import { btnStyle, fileStyle, labelStyle, tabStyle, thumbStyle } from "./styles";
+
+type Props = {
+  label: string;
+  accept: string;
+  file?: File;
+  path: string;
+  previewUrl?: string;
+  isImage: boolean;
+  onChange: (f: File | undefined, name: string, preview?: string) => void;
+};
+
+export default function MediaField({
+  label,
+  accept,
+  file,
+  path,
+  previewUrl,
+  isImage,
+  onChange,
+}: Props) {
+  const [mode, setMode] = useState<"upload" | "record">("upload");
+  const [recording, setRecording] = useState(false);
+  const [recError, setRecError] = useState<string | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const streamRef = useRef<MediaStream | null>(null);
+
+  const stopStream = () => {
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+  };
+
+  const startRecording = async () => {
+    setRecError(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      const rec = new MediaRecorder(stream);
+      mediaRecorderRef.current = rec;
+      chunksRef.current = [];
+      rec.ondataavailable = (e) => e.data.size && chunksRef.current.push(e.data);
+      rec.onstop = () => {
+        stopStream();
+        const blob = new Blob(chunksRef.current, { type: "audio/webm" });
+        const f = new File([blob], `recording-${Date.now()}.webm`, { type: "audio/webm" });
+        const url = URL.createObjectURL(blob);
+        onChange(f, f.name, url);
+        setRecording(false);
+      };
+      rec.start();
+      setRecording(true);
+    } catch {
+      setRecError("Microphone access denied or unavailable.");
+      setRecording(false);
+    }
+  };
+
+  const stopRecording = () => mediaRecorderRef.current?.stop();
+
+  return (
+    <div>
+      <label style={labelStyle}>{label}</label>
+
+      {!isImage && (
+        <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+          <div style={tabStyle(mode === "upload")} onClick={() => setMode("upload")}>Upload</div>
+          <div style={tabStyle(mode === "record")} onClick={() => setMode("record")}>Record</div>
+        </div>
+      )}
+
+      {(isImage || mode === "upload") && (
+        <input
+          type="file"
+          accept={accept}
+          style={fileStyle}
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (!f) return onChange(undefined, "");
+            const url = URL.createObjectURL(f);
+            onChange(f, f.name, url);
+          }}
+        />
+      )}
+
+      {!isImage && mode === "record" && (
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          {!recording ? (
+            <button type="button" style={btnStyle} onClick={startRecording}>
+              ● Start recording
+            </button>
+          ) : (
+            <button
+              type="button"
+              style={{ ...btnStyle, background: commonStyles.purple, color: commonStyles.white }}
+              onClick={stopRecording}
+            >
+              ■ Stop
+            </button>
+          )}
+          {recording && <span style={{ fontSize: "0.8em", color: commonStyles.purple }}>Recording…</span>}
+          {recError && <span style={{ fontSize: "0.8em", color: commonStyles.purple }}>{recError}</span>}
+        </div>
+      )}
+
+      {(previewUrl || path) && (
+        <div style={{ marginTop: 8, display: "flex", gap: 10, alignItems: "center" }}>
+          {isImage ? (
+            <img src={previewUrl ?? path} alt="preview" style={thumbStyle} />
+          ) : (
+            <audio controls src={previewUrl ?? path} style={{ width: "100%", maxWidth: 320 }} />
+          )}
+        </div>
+      )}
+
+      {file && (
+        <div style={{ fontSize: "0.75em", color: commonStyles.purple, opacity: 0.7, marginTop: 4 }}>
+          📎 {file.name}
+        </div>
+      )}
+    </div>
+  );
+}
+## ending of file ./MediaField.tsx ##
+
+## file number: 3
+## starting ./UnitEditor.tsx ##
+import { commonStyles, defaultSetting } from "../../../components/theme/default";
+import MediaField from "./MediaField";
+import { inputStyle, labelStyle } from "./styles";
+import type { DraftUnit } from "./types";
+
+type Props = {
+  unit: DraftUnit;
+  onUpdate: (id: string, patch: Partial<DraftUnit>) => void;
+};
+
+/** Convert "dialog_1" → "Dialog 1", "unit_3" → "Unit 3". Falls back to the raw id. */
+function displayLabel(id: string): string {
+  const m = id.match(/^([a-z]+)_(\d+)$/i);
+  if (!m) return id;
+  const [, word, num] = m;
+  return `${word.charAt(0).toUpperCase()}${word.slice(1).toLowerCase()} ${num}`;
+}
+
+export default function UnitEditor({ unit, onUpdate }: Props) {
+  const isDescribe = unit.phase === "describe_image";
+  const isDialog = unit.id.startsWith("dialog_");
+  const contentIsImage = isDescribe && !isDialog;
+  const contentAccept = contentIsImage ? "image/*" : "audio/*";
+  const contentLabel = contentIsImage
+    ? "Image to describe"
+    : isDescribe
+    ? "Intro audio"
+    : "Audio to hear";
+
+  return (
+    <div
+      style={{
+        border: `1px solid ${commonStyles.faded_purple}`,
+        borderRadius: "8px",
+        padding: "0.75em 1em",
+        marginBottom: "0.75em",
+        background: isDialog ? commonStyles.faded_purple : commonStyles.white,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginBottom: "0.5em",
+        }}
+      >
+        <strong style={{ color: commonStyles.purple }}>
+          {displayLabel(unit.id)}
+          {isDialog && " (intro)"}
+        </strong>
+        <span style={{ fontSize: "0.8em", color: commonStyles.purple, opacity: 0.7 }}>
+          {unit.phase}
+        </span>
+      </div>
+
+      <div style={{ display: "flex", gap: "0.75em", flexWrap: "wrap" }}>
+        <div style={{ flex: "1 1 320px" }}>
+          <MediaField
+            label={contentLabel}
+            accept={contentAccept}
+            file={unit.contentFile}
+            path={unit.content}
+            previewUrl={unit.contentPreview}
+            isImage={contentIsImage}
+            onChange={(f, name, url) =>
+              onUpdate(unit.id, {
+                contentFile: f,
+                contentPreview: url,
+                content: name
+                  ? `${contentIsImage ? defaultSetting.base_bank + "test/" : defaultSetting.base_audio}${name}`
+                  : "",
+              })
+            }
+          />
+        </div>
+
+        <div style={{ flex: "0 0 100px" }}>
+          <label style={labelStyle}>Think (s)</label>
+          <input
+            type="number"
+            style={inputStyle}
+            value={unit.thinking_time}
+            onChange={(e) => onUpdate(unit.id, { thinking_time: Number(e.target.value) })}
+          />
+        </div>
+
+        <div style={{ flex: "0 0 100px" }}>
+          <label style={labelStyle}>Speak (s)</label>
+          <input
+            type="number"
+            style={inputStyle}
+            value={unit.speaking_time}
+            onChange={(e) => onUpdate(unit.id, { speaking_time: Number(e.target.value) })}
+          />
+        </div>
+      </div>
+
+      {isDescribe && (
+        <div style={{ marginTop: "0.5em" }}>
+          <label style={labelStyle}>Helpful sentence</label>
+          <textarea
+            style={{ ...inputStyle, minHeight: 60, resize: "vertical" }}
+            value={unit.helpful_sentence ?? ""}
+            onChange={(e) => onUpdate(unit.id, { helpful_sentence: e.target.value })}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+## ending of file ./UnitEditor.tsx ##
+

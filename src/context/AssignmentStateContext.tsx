@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useCallback, type ReactNode } from "react";
-import type { AssignmentState } from "../session/UserSession";
+import type { AssignmentState, SpeakingAssignment, SpeakingUnit } from "../session/UserSession";
 
 
 
@@ -50,6 +50,11 @@ export function useUpdateAssignment(): (updater: Updater) => void {
 }
 
 export function useIsDialog(): boolean {
-  const { unitIndex } = useAssignmentState();
-  return unitIndex === 0 || unitIndex === 6;
+    const { session,unitIndex } = useAssignmentState();
+    const assigment = session.assignment as SpeakingAssignment; 
+    const units = assigment.units as SpeakingUnit[]; 
+    const unit = units[unitIndex]; 
+    const _type = unit?.id.substring(0,unit?.id.indexOf('_'));
+    const isDialog = _type === "dialog"
+  return isDialog; 
 }

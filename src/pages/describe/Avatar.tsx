@@ -5,7 +5,7 @@ import { defaultSetting } from "../../components/theme/default";
 import { useAssignmentState, useUpdateAssignment } from "../../context/AssignmentStateContext";
 import type { SpeakingAssignment, SpeakingUnit } from "../../session/UserSession";
 
-import { useFooter } from "../../context/FooterContext";
+// import { useFooter } from "../../context/FooterContext";
 import AudioFile from "./Audio";
  
 
@@ -17,7 +17,7 @@ export default function Avatar() {
     // const [audioFile, setAudio] = useState<string>(null); //`${defaultSetting.base_dialogs}test.mp3`;
     // const [isTicking, setTickState] = useState(false);
     // const [isListening, setListenState] = useState(false);
-    const LISTENING_TIMER = defaultSetting.think_about_listening;//20; 
+    // const LISTENING_TIMER = defaultSetting.think_about_listening;//20; 
     const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
     useEffect(()=>{
         const base = `${defaultSetting.base_bot}`;
@@ -55,10 +55,15 @@ export default function Avatar() {
         // setButtonColor(commonStyles.faded_purple);
         // setButtonLabel("In Progress...");
         // console.log({index:unitIndex,state:answer_state});
-        update({
-            timer_current: LISTENING_TIMER,
-            timer_started: LISTENING_TIMER,
-            label_message: "Wait for the timer to talk..."
+        update((prev)=>{
+            const assigment = prev.session.assignment as SpeakingAssignment; 
+            const units = assigment.units as SpeakingUnit[]; 
+            const unit = units[prev.unitIndex]; 
+                return {
+                timer_current: unit.thinking_time,
+                timer_started: unit.thinking_time,
+                label_message: "Wait for the timer to talk..."
+            }
         });
 
         // const assigment = session.assignment as SpeakingAssignment;
@@ -113,7 +118,7 @@ export default function Avatar() {
     useEffect(()=>{
         update((prev)=>{
             if(prev.unitIndex === 6 && prev.answer_state === 5){
-                        console.log(prev);
+                        // console.log(prev);
                         const assigment = prev.session.assignment as SpeakingAssignment;
                         const units = assigment.units as SpeakingUnit[];
                         const content = units[prev.unitIndex].content; 
@@ -177,6 +182,7 @@ export default function Avatar() {
             <AudioFile/>
 
             <img
+                onDragStart={(e) => e.preventDefault()}
                 src={bot}
                 width={"140px"}
                 height={"140px"}

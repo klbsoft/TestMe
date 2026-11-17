@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { commonStyles } from "../../components/theme/default";
 import Assignments from "./Schedule";
-import Grades from "./Grades";
 import Groups from "./Groups";
+import Grades from "./grades/Grades";
 
 export default function ContentArea() {
   const [activeSection, setActiveSection] = useState<string>("Assignments");

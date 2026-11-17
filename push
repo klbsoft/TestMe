@@ -1,0 +1,1 @@
+scp -v -r dist/* ec2:testme/

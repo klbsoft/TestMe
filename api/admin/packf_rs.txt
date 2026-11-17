@@ -1,0 +1,309 @@
+## file number: 1
+## starting ./src/dbfactory.rs ##
+use axum::Json;
+use mongodb::{Client, Collection, Database as MongoDatabase};
+use mongodb::bson::doc;
+// use once_cell::sync::OnceCell;
+// use rusqlite::Transaction;
+use serde::{Deserialize, Serialize};
+
+
+use crate::identity::identities::{Teacher, UserInfo};
+use crate::identity::*; 
+use std::sync::OnceLock;
+
+static DB: OnceLock<Mongo> = OnceLock::new();
+// static DB: OnceCell<Database> = OnceCell::new();
+
+#[derive(Debug, Clone)]
+pub struct Mongo {
+    db: MongoDatabase,
+}
+
+impl Mongo {
+    pub async fn open() -> Self {
+        let client = Client::with_uri_str("mongodb://localhost:27017")
+            .await
+            .expect("Failed to connect");
+        
+        // Ping to verify
+        client
+            .database("admin")
+            .run_command(doc! { "ping": 1 })
+            .await
+            .expect("Failed to ping");
+        
+        let db = client.database("testme");
+        
+        Mongo { db }
+    }
+    
+    
+    pub fn users(&self) -> Collection<UserInfo> {
+        self.db.collection("users")
+    }
+    pub fn teachers(&self) -> Collection<Teacher> {
+        self.db.collection("teacher")
+    }
+    
+
+}
+
+pub async fn init_db() {
+    let database = Mongo::open().await;
+    DB.set(database).expect("Already initialized");
+}
+
+pub fn db() -> &'static Mongo {
+    DB.get().expect("Database not initialized")
+}
+
+ 
+
+
+
+ 
+
+pub async fn list_users() {
+    println!("\n=== ALL USERS ===\n");
+    
+    let mut cursor = match db().users().find(doc! {}).await {
+        Ok(cursor) => cursor,
+        Err(e) => {
+            println!("Error: {}", e);
+            return;
+        }
+    };
+    
+    let mut count = 0;
+    while cursor.advance().await.unwrap_or(false) {
+        match cursor.deserialize_current() {
+            Ok(user) => {
+                count += 1;
+                println!("User {}: {:#?}", count, user);
+            }
+            Err(e) => {
+                println!("Error deserializing: {}", e);
+            }
+        }
+    }
+    println!("Total: {}", count);
+}
+
+
+## ending of file ./src/dbfactory.rs ##
+
+## file number: 2
+## starting ./src/hash.rs ##
+use sha2::{Digest, Sha512};
+
+/// Stage 1: deterministic SHA-512, byte-identical to the JS tool.
+pub fn deterministic_hash_512(input: &str) -> String {
+    let mut hasher = Sha512::new();
+    hasher.update(input.as_bytes());
+    hex::encode(hasher.finalize())
+}
+
+/// Stage 2: non-deterministic re-hash, mirrors `CryptoService::non_deterministic_hash`.
+/// Returns (hash_string, salt_string).
+pub fn non_deterministic_hash(prehash_hex: &str) -> anyhow::Result<(String, String)> {
+    use argon2::{Argon2, PasswordHasher};
+    use argon2::password_hash::{rand_core::OsRng, SaltString};
+
+    let salt = SaltString::generate(&mut OsRng);
+    let salt_string = salt.as_str().to_string();
+
+    let hash = Argon2::default()
+        .hash_password(prehash_hex.as_bytes(), &salt)?
+        .to_string();
+
+    Ok((hash, salt_string))
+}
+## ending of file ./src/hash.rs ##
+
+## file number: 3
+## starting ./src/identity.rs ##
+use serde::{Deserialize, Serialize};
+
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Teacher {
+    pub id: String,
+    pub name: String,
+    pub password_hash: String,
+    pub salt: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+## ending of file ./src/identity.rs ##
+
+## file number: 4
+## starting ./src/id.rs ##
+use argon2::password_hash::rand_core::{OsRng, RngCore};
+
+/// 64-char hex id (32 random bytes).
+pub fn random_id_64() -> String {
+    let mut bytes = [0u8; 32];
+    OsRng.fill_bytes(&mut bytes);
+    hex::encode(bytes)
+}
+## ending of file ./src/id.rs ##
+
+## file number: 5
+## starting ./src/main.rs ##
+mod hash;
+mod id;
+
+mod identity; 
+mod dbfactory; 
+
+use anyhow::{Context, Result};
+use clap::Parser;
+use std::io::{self, Write};
+
+use components::dbfactory::{db, init_db};
+use identity::identities::Teacher;
+
+#[derive(Parser, Debug)]
+#[command(name = "teacher-cli", about = "Create a teacher account")]
+struct Args {
+    #[arg(short, long)]
+    name: String,
+
+    /// Stage-1 SHA-512 hex (128 chars) from the JS tool.
+    #[arg(short = 'p', long = "password-hash", conflicts_with = "raw_password")]
+    password_hash: Option<String>,
+
+    /// Raw password; stage 1 runs here.
+    #[arg(long = "raw-password")]
+    raw_password: Option<String>,
+
+    #[arg(long)]
+    dry_run: bool,
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let args = Args::parse();
+
+    // ── STAGE 1 (deterministic) ─────────────────────────────────────────
+    let prehash_hex = match (args.password_hash, args.raw_password) {
+        (Some(h), None) => {
+            let h = h.trim().to_lowercase();
+            if h.len() != 128 || !h.chars().all(|c| c.is_ascii_hexdigit()) {
+                anyhow::bail!("password-hash must be 128 hex chars (SHA-512)");
+            }
+            h
+        }
+        (None, Some(raw)) => hash::deterministic_hash_512(&raw),
+        (None, None) => {
+            print!("Password (visible): ");
+            io::stdout().flush()?;
+            let mut buf = String::new();
+            io::stdin().read_line(&mut buf)?;
+            hash::deterministic_hash_512(buf.trim_end_matches(['\n', '\r']))
+        }
+        _ => unreachable!("clap conflicts_with"),
+    };
+
+    // ── STAGE 2 (non-deterministic) ─────────────────────────────────────
+    let (password_hash, salt) =
+        hash::non_deterministic_hash(&prehash_hex).context("non-deterministic re-hash")?;
+
+    // ── Build Teacher (exact shape your factory serializes) ─────────────
+    let now = chrono::Utc::now().to_rfc3339();
+    let teacher = Teacher {
+        id: id::random_id_64(),
+        name: args.name.clone(),
+        password_hash,
+        salt,
+        created_at: now.clone(),
+        updated_at: now,
+    };
+    let teacher_json = serde_json::to_value(&teacher)?;
+
+    if args.dry_run {
+        println!("{}", serde_json::to_string_pretty(&teacher_json)?);
+        return Ok(());
+    }
+
+    // ── Initialize your factory, then insert via .teachers() ────────────
+    init_db().await;
+
+    db().teachers()
+        .insert_one(&teacher)
+        .await
+        .context("insert teacher")?;
+
+    println!("{}", serde_json::to_string(&teacher_json)?);
+    Ok(())
+}
+## ending of file ./src/main.rs ##
+
+## file number: 6
+## starting ./target/debug/build/rustc_version_runtime-3bddc1a9b98907ae/out/version.rs ##
+
+            /// Returns the `rustc` SemVer version and additional metadata
+            /// like the git short hash and build date.
+            pub fn version_meta() -> VersionMeta {
+                VersionMeta {
+                    semver: Version {
+                        major: 1,
+                        minor: 97,
+                        patch: 1,
+                        pre: vec![],
+                        build: vec![],
+                    },
+                    host: "x86_64-unknown-linux-gnu".to_owned(),
+                    short_version_string: "rustc 1.97.1 (8bab26f4f 2026-07-14)".to_owned(),
+                    commit_hash: Some("8bab26f4f68e0e26f0bb7960be334d5b520ea452".to_owned()),
+                    commit_date: Some("2026-07-14".to_owned()),
+                    build_date: None,
+                    channel: Channel::Stable,
+                }
+            }
+            
+## ending of file ./target/debug/build/rustc_version_runtime-3bddc1a9b98907ae/out/version.rs ##
+
+## file number: 7
+## starting ./target/debug/build/serde-46367230ef002103/out/private.rs ##
+#[doc(hidden)]
+pub mod __private229 {
+    #[doc(hidden)]
+    pub use crate::private::*;
+}
+use serde_core::__private229 as serde_core_private;
+
+## ending of file ./target/debug/build/serde-46367230ef002103/out/private.rs ##
+
+## file number: 8
+## starting ./target/debug/build/serde-9e202a7418b624cf/out/private.rs ##
+#[doc(hidden)]
+pub mod __private229 {
+    #[doc(hidden)]
+    pub use crate::private::*;
+}
+use serde_core::__private229 as serde_core_private;
+
+## ending of file ./target/debug/build/serde-9e202a7418b624cf/out/private.rs ##
+
+## file number: 9
+## starting ./target/debug/build/serde_core-2732ec4f29afa10c/out/private.rs ##
+#[doc(hidden)]
+pub mod __private229 {
+    #[doc(hidden)]
+    pub use crate::private::*;
+}
+
+## ending of file ./target/debug/build/serde_core-2732ec4f29afa10c/out/private.rs ##
+
+## file number: 10
+## starting ./target/debug/build/serde_core-ce6b41b11bf15c97/out/private.rs ##
+#[doc(hidden)]
+pub mod __private229 {
+    #[doc(hidden)]
+    pub use crate::private::*;
+}
+
+## ending of file ./target/debug/build/serde_core-ce6b41b11bf15c97/out/private.rs ##
+

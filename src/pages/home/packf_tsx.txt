@@ -1,0 +1,298 @@
+## file number: 1
+## starting ./CountDown.tsx ##
+// CountDown.tsx
+import { commonStyles } from "../../components/theme/default";
+
+type Props = {
+    current: number;
+    started: number;
+    label?: string;
+    finished?: boolean;
+};
+
+export default function CountDown({
+    current,
+    started,
+    label = "Be seated",
+    finished = false,
+}: Props) {
+    const remaining = Math.max(0, current);
+    const ringPercent = 100 - Math.floor((remaining / started) * 100);
+
+    return (
+        <div
+       
+            style={{
+                display: finished ? "none" : "flex",
+                position: "fixed",
+                top: "50%",
+                left: "50%",
+                transform: "translate(-50%, -50%)",
+                zIndex: 9999,
+                pointerEvents: "none",
+                flexDirection: "column",
+                alignItems: "center",
+                gap: "16px",
+            }}
+        >
+            <span
+                style={{
+                    color: commonStyles.purple,
+                    fontSize: "54px",
+                    fontWeight: "bold",
+                    letterSpacing: "1px",
+                    textTransform: "uppercase",
+                }}
+            >
+                {label}
+            </span>
+
+            <div
+                style={{
+                    width: "220px",
+                    height: "220px",
+                    borderRadius: "50%",
+                    background: `conic-gradient(${commonStyles.faded_purple} ${ringPercent}%, ${commonStyles.white} ${ringPercent}%)`,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    boxShadow: "0 8px 30px rgba(0,0,0,0.25)",
+                }}
+            >
+                <div
+                    style={{
+                        width: "190px",
+                        height: "190px",
+                        borderRadius: "50%",
+                        backgroundColor: commonStyles.purple,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                    }}
+                >
+                    <span
+                        style={{
+                            color: commonStyles.white,
+                            fontSize: "64px",
+                            fontWeight: commonStyles.button_fontWeight,
+                            lineHeight: 1,
+                        }}
+                    >
+                        {remaining}s
+                    </span>
+                </div>
+            </div>
+        </div>
+    );
+}
+## ending of file ./CountDown.tsx ##
+
+## file number: 2
+## starting ./Home.tsx ##
+import { useEffect, useState } from "react";
+import { AssignmentStateProvider } from "../../context/AssignmentStateContext";
+import { type AssignmentSession } from "../../session/UserSession";
+import { commonStyles, defaultSetting } from "../../components/theme/default";
+import CountDown from "./CountDown";
+import DescribeTheImage from "../describe/Describe";
+import { fetchAssigmentSession } from "../../session/fetcher";
+import { PermissionsGate, usePermissions } from "./PermitionsGate"
+// import Completed from "../describe/Completed";
+
+//Home({ state }: { state: boolean })
+export default function Home({state,setter}: {state:boolean,setter:React.Dispatch<React.SetStateAction<boolean>>}){
+  return (
+    <PermissionsGate>
+      <HomeInner state={state} setter={setter}/>
+    </PermissionsGate>
+  );
+}
+
+function HomeInner({state,setter}: {state:boolean,setter:React.Dispatch<React.SetStateAction<boolean>>}) {
+  const { status, errorMsg, requestPermissions } = usePermissions();
+  // const {completed} = useAssignmentState();
+  const COUNTDOWN_SECONDS = defaultSetting.initial_count_down;
+
+  const [phase, setPhase] = useState<"idle" | "running" | "done">("idle");
+  const [timer, setTimer] = useState(COUNTDOWN_SECONDS);
+  const done = timer <= 0;
+
+  const enterFullscreen = () => {
+    const elem = document.documentElement;
+    if (elem.requestFullscreen) {
+      elem.requestFullscreen().catch(() => {
+        // Ignore — user may have denied, or browser may block on load
+        // alert("YOU MUST ALLOW ")
+      });
+    }
+  };
+  const handleStart = async () => {
+    enterFullscreen();
+    // 🔑 the click is the gesture — request permissions here
+    const ok = await requestPermissions();
+    if (!ok) return; // stay on the Start screen (loop)
+
+    setTimer(COUNTDOWN_SECONDS);
+    setPhase("running");
+  };
+
+  useEffect(() => {
+    if (phase !== "running") return;
+    const id = setInterval(() => setTimer((p) => (p > 0 ? p - 1 : 0)), 1000);
+    return () => clearInterval(id);
+  }, [phase]);
+
+  useEffect(() => {
+    if (phase === "running" && done) setPhase("done");
+  }, [done, phase]);
+
+  const session: AssignmentSession = fetchAssigmentSession();
+  
+  return (
+    <AssignmentStateProvider
+      initial={{
+        session,
+        unitIndex: 0,
+        timeElapsed: 0,
+        maxTimePerAnswer: 45,
+        maxSessionTime: 900,
+        timer_current: 0,
+        timer_started: 0,
+        answer_state:0,
+        is_recording: false,
+        label_message:"",
+        message_note: "",
+        answer_saved: false, 
+        completed: false,
+        audio_file: null,
+        isPlaying: false, 
+        isListening: false,
+        isTicking: false,
+      }}
+    >
+      {phase === "idle" && (
+        <div
+          style={{
+            position: "fixed",
+            top: "50%",
+            left: "50%",
+            transform: "translate(-50%, -50%)",
+            zIndex: 9999,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: "16px",
+          }}
+        >
+          <button
+            onClick={handleStart}
+            style={{
+              padding: "24px 64px",
+              fontSize: "28px",
+              fontWeight: "bold",
+              color: commonStyles.white,
+              backgroundColor: commonStyles.purple,
+              border: "none",
+              borderRadius: "16px",
+              cursor: "pointer",
+              letterSpacing: "1px",
+              textTransform: "uppercase",
+              boxShadow: "0 8px 30px rgba(0,0,0,0.25)",
+            }}
+          >
+            Start
+          </button>
+
+          {status === "blocked" && (
+            <p
+              style={{
+                color: commonStyles.purple,
+                fontSize: 16,
+                fontWeight: "bold",
+                margin: 0,
+                textAlign: "center",
+                maxWidth: 320,
+              }}
+            >
+              {errorMsg} Please allow the microphone in your browser, then press Start again.
+            </p>
+          )}
+        </div>
+      )}
+
+      {phase === "running" && !done && (
+        <CountDown current={timer} started={1} label="Be seated" />
+      )}
+      
+      {phase === "done"&&<DescribeTheImage />}
+
+    </AssignmentStateProvider>
+  );
+}
+## ending of file ./Home.tsx ##
+
+## file number: 3
+## starting ./PermitionsGate.tsx ##
+// PermissionsGate.tsx
+import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from "react";
+
+
+type GateStatus = "idle" | "blocked" | "granted";
+
+type Ctx = {
+  status: GateStatus;
+  errorMsg: string;
+  /** call this from a click handler; resolves true if everything is granted */
+  requestPermissions: () => Promise<boolean>;
+};
+
+const PermissionsContext = createContext<Ctx | null>(null);
+
+export function PermissionsGate({ children }: { children: ReactNode }) {
+  const [status, setStatus] = useState<GateStatus>("idle");
+  const [errorMsg, setErrorMsg] = useState("");
+  const lockedRef = useRef(false); // prevents double-fire during a pending request
+
+  const requestPermissions = useCallback(async (): Promise<boolean> => {
+    if (lockedRef.current) return false;
+    lockedRef.current = true;
+
+    // 1. unlock audio (silent)
+    const a = new Audio();
+    a.muted = true;
+    a.play().catch(() => {});
+
+    // 2. ask for mic
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach((t) => t.stop());
+      setStatus("granted");
+      setErrorMsg("");
+      lockedRef.current = false;
+      return true;
+    } catch (err: any) {
+      console.warn("[PermissionsGate] mic denied:", err?.name, err?.message);
+      if (err?.name === "NotFoundError") setErrorMsg("No microphone detected on this device.");
+      else if (err?.name === "NotAllowedError") setErrorMsg("Microphone access was blocked.");
+      else setErrorMsg(err?.message ?? "Could not access the microphone.");
+
+      setStatus("blocked");
+      lockedRef.current = false;
+      return false;
+    }
+  }, []);
+
+  return (
+    <PermissionsContext.Provider value={{ status, errorMsg, requestPermissions }}>
+      {children}
+    </PermissionsContext.Provider>
+  );
+}
+
+export function usePermissions() {
+  const ctx = useContext(PermissionsContext);
+  if (!ctx) throw new Error("usePermissions must be used inside <PermissionsGate>");
+  return ctx;
+}
+## ending of file ./PermitionsGate.tsx ##
+

@@ -4,6 +4,7 @@ import { useAssignmentState, useIsDialog } from "../../context/AssignmentStateCo
 import {
     AssignmentType,
     SpeakingPhase,
+    type SpeakingAssignment,
     type SpeakingUnit,
 } from "../../session/UserSession";
 
@@ -28,11 +29,12 @@ function normalizeSentence(input?: string | string[]): string[] {
 }
 
 export default function Message() {
-    const { message_note,session, unitIndex, timeElapsed, maxTimePerAnswer ,timer_current,timer_started} = useAssignmentState();
+    const {is_recording, isPlaying,message_note,session, unitIndex, timeElapsed, maxTimePerAnswer ,timer_current,timer_started} = useAssignmentState();
     const { width: windowWidth, height: windowHeight } = useWindowSize();
 
     const [showScrollIndicator, setShowScrollIndicator] = useState(false);
     const isDialog = useIsDialog();
+ 
     const contentRef = useRef<HTMLDivElement>(null);
 
     // --- narrow assignment/unit safely ---
@@ -42,10 +44,14 @@ export default function Message() {
         ? assignment.units[unitIndex] ?? null
         : null;
 
+    // const _type = unit?.id.substring(0,unit?.id.indexOf('_'));
+
+    // const isDialog = _type === "dialog"
+
     // --- derive content flags ---
-    const isTestUnit = unit?.id === "dialog_a" || unit?.id === "dialog_b";
+    // const isTestUnit =  _type === "dialog";
     const isDescribe = unit?.phase === SpeakingPhase.describe_image;
-    const showHelpful = isTestUnit || isDescribe;
+    const showHelpful = isDialog || isDescribe;
     const lines = showHelpful ? normalizeSentence(unit?.helpful_sentence) : [];
 
     // --- layout ---
@@ -57,8 +63,8 @@ export default function Message() {
     // timer ring
 const remaining = Math.max(0, timer_current);
 const ringPercent = 100 - Math.floor((remaining / timer_started) * 100) ;
- 
 
+ 
 // console.log({remain:remaining,porcent:ringPercent})
     // --- scroll indicator ---
     useEffect(() => {
@@ -84,7 +90,7 @@ const ringPercent = 100 - Math.floor((remaining / timer_started) * 100) ;
     // if (!showHelpful || lines.length === 0) {
     //     return null;
     // }
-
+    // console.log({isPlaying,isDialog})
     return (
         <div
             className="page-transition"
@@ -139,6 +145,7 @@ const ringPercent = 100 - Math.floor((remaining / timer_started) * 100) ;
                         marginBottom: "5px",
                     }}
                 >
+                    
                     {unitIndex > 6 || isDialog ? "Info" : `Helpful sentence${message_note}`} 
                     {unitIndex > 6 ?`${message_note}`:""}
                 </label>
@@ -168,19 +175,19 @@ const ringPercent = 100 - Math.floor((remaining / timer_started) * 100) ;
                         textAlign: "left",
                     }}
                 >
-                    {
-                        !isDialog && unitIndex < 6?(
+                    {!isDialog && unitIndex < 6 ? (
+                        is_recording ? (
                             <>
-                        <li>Today, I will be describing the...</li>
-                        <li>The first image that I see, shows an illustration of the ...</li>
-                        <li>Also, the photo depicts...</li>
-                        <li>Lastly, the photo shows...</li>
-                        <li>The Landscape is characterized by...</li>
+                            <li>Today, I will be describing the...</li>
+                            <li>The first image that I see, shows an illustration of the ...</li>
+                            <li>Also, the photo depicts...</li>
+                            <li>Lastly, the photo shows...</li>
+                            <li>The Landscape is characterized by...</li>
                             </>
-                        ):
-                        lines
-                        
-                    }
+                        ) : (<li>Carefully observe every detail of the image.</li>)
+                    ) : (
+                    lines
+                    )}
                     {
                         unitIndex > 6?(
                             <li>Speak as clear as you can after the audio...</li>
@@ -205,14 +212,14 @@ const ringPercent = 100 - Math.floor((remaining / timer_started) * 100) ;
             )}
 
             {/* timer ring */}
-            {!isDialog && (
+            {isDialog === false && isPlaying === false? (
                 <div
                  style={{
             width: "84px",
             height: "84px",
             borderRadius: "50%",
             background: `conic-gradient(${commonStyles.faded_purple} ${ringPercent}%, ${commonStyles.white} ${ringPercent}%)`,
-            display:"flex",
+             display:"flex",
             alignItems: "center",
             justifyContent: "center",
             flexShrink: 0,
@@ -241,7 +248,7 @@ const ringPercent = 100 - Math.floor((remaining / timer_started) * 100) ;
                         </span>
                     </div>
                 </div>
-            )}
+            ):null}
 
         </div>
     );

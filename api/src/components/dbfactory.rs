@@ -6,9 +6,8 @@ use mongodb::bson::doc;
 use serde::{Deserialize, Serialize};
 
 
-use crate::identity::identities::UserSettings;
-use crate::identity::{Bus, Driver, DriverAssignment, FareHistory, PassengerTrip, RouteStop, Transaction, Trip, User, UserClient, Wallet};
-
+use crate::identity::identities::{AssigmentAttempt, FileInfo, RawAssigment, Session , Teacher, UserInfo};
+use crate::identity::*; 
 use std::sync::OnceLock;
 
 static DB: OnceLock<Mongo> = OnceLock::new();
@@ -32,55 +31,29 @@ impl Mongo {
             .await
             .expect("Failed to ping");
         
-        let db = client.database("opti-via");
+        let db = client.database("testme");
         
         Mongo { db }
     }
     
     
-    pub fn users(&self) -> Collection<User> {
+    pub fn users(&self) -> Collection<UserInfo> {
         self.db.collection("users")
     }
-    
-    pub fn wallets(&self) -> Collection<Wallet> {
-        self.db.collection("wallets")
+    pub fn teachers(&self) -> Collection<Teacher> {
+        self.db.collection("teachers")
     }
-    
-    
-    pub fn transactions(&self) -> Collection<Transaction> {
-        self.db.collection("transactions")
+    pub fn files(&self) -> Collection<FileInfo> {
+        self.db.collection("files")
     }
-    
-    pub fn buses(&self) -> Collection<Bus> {
-        self.db.collection("buses")
+    pub fn raw_assigments(&self) -> Collection<RawAssigment> {
+        self.db.collection("raw_assigments")
     }
-    pub fn drivers(&self) -> Collection<Driver> {
-    self.db.collection("drivers")
-}
+    pub fn attempts(&self) -> Collection<AssigmentAttempt> {
+        self.db.collection("attempts")
+    }
 
-pub fn trips(&self) -> Collection<Trip> {
-    self.db.collection("trips")
-}
 
-pub fn passenger_trips(&self) -> Collection<PassengerTrip> {
-    self.db.collection("passenger_trips")
-}
-
-pub fn driver_assignments(&self) -> Collection<DriverAssignment> {
-    self.db.collection("driver_assignments")
-}
-
-pub fn route_stops(&self) -> Collection<RouteStop> {
-    self.db.collection("route_stops")
-}
-
-pub fn fare_history(&self) -> Collection<FareHistory> {
-    self.db.collection("fare_history")
-}
-
-pub fn user_settings(&self) -> Collection<UserSettings> {
-    self.db.collection("user_settings")
-}
 }
 
 pub async fn init_db() {

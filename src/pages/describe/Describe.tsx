@@ -8,16 +8,19 @@ import { SpeakingPhase } from "../../session/UserSession";
 import { commonStyles } from "../../components/theme/default";
 import { useAssignmentState,useUpdateAssignment } from "../../context/AssignmentStateContext";
 import Completed from "./Completed";
+import CheatDetector from "./CheatDetector";
 
-export default function DescribeTheImage(){
-    const {completed} = useAssignmentState(); 
+export default function DescribeTheImage({setter}:{setter:React.Dispatch<React.SetStateAction<boolean>>}){
+  const { completed } = useAssignmentState(); 
+  const [cheated,setCheatState] = useState(false);
   return (
-   <>
-    {
-      (completed===true)?<Completed/>:<Inner/>
-    }
-   </>
-  )
+    <CheatDetector enabled={!completed} onCheatDetected={() => {
+      setCheatState(true); 
+    }}>
+      { completed ===  true ? <Completed setter={setter}/> : 
+      (cheated===false?<Inner />:null) }
+    </CheatDetector>  
+  );
 }
 
 function Inner() {

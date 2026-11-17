@@ -12,10 +12,9 @@ export enum SpeakingPhase {
 }
 
 export interface UserInfo {
-  id: string;
-  group: string;
-  teacher: string;
+  code: string; 
   password: string;
+  teacher: string;
   assignments: Assignment[];
 }
 
@@ -26,6 +25,8 @@ export interface SpeakingUnit {
   helpful_sentence?: string; // Only for describe_image phase
   answer: any; // Audio blob from student
   grade: string | null;
+  thinking_time: number; 
+  speaking_time: number; 
 }
 
 
@@ -82,3 +83,9 @@ export interface AssignmentState {
 
 // 0
 // 
+
+
+export interface UserLogin{
+  code: string; 
+  password: string; 
+}

@@ -86,3 +86,34 @@ export async function decryptBlob(
 
     return new Blob([plaintext], { type: mimeType });
 }
+
+
+// export async function hash512(input: string | Uint8Array): Promise<string> {
+//     const enc = new TextEncoder();
+
+//     const data: Uint8Array<ArrayBuffer> =
+//         typeof input === "string"
+//             ? (enc.encode(input) as Uint8Array<ArrayBuffer>)
+//             : (new Uint8Array(input) as Uint8Array<ArrayBuffer>);
+
+//     const digest = await crypto.subtle.digest("SHA-512", data);
+
+//     // 64 bytes → 128 lowercase hex chars, exactly like Rust's hex::encode(...)
+//     return Array.from(new Uint8Array(digest))
+//         .map((b) => b.toString(16).padStart(2, "0"))
+//         .join("");
+// }
+
+export async function hash512(input: string | Uint8Array): Promise<string> {
+    const enc = new TextEncoder();
+    const data: Uint8Array<ArrayBuffer> =
+        typeof input === "string"
+            ? (enc.encode(input) as Uint8Array<ArrayBuffer>)
+            : (new Uint8Array(input) as Uint8Array<ArrayBuffer>);
+
+    const digest = await crypto.subtle.digest("SHA-512", data);
+
+    return Array.from(new Uint8Array(digest))
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("");  // 128 lowercase hex chars — same as hex::encode(...)
+}

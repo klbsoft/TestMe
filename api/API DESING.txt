@@ -1,0 +1,20 @@
+API DESING 
+
+ENDPOINTS 
+
+[user] 
+post login(string) // text max length 5
+post save(string) // json
+get assigments() // return json with all assigments id's 
+get session(string) // return current session 
+
+[admin]
+post login(string,string) // passowrd and user
+post create_group(string) // json of group students and group letter 
+post update_assigment(string) // json create assigment 
+delete delete_group(string) // remove the group 
+post grade_assigment(string) // json with assigment 
+
+
+
+

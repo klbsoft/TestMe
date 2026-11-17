@@ -1,0 +1,3753 @@
+## file number: 1
+## starting ./bus.rs ##
+
+## ending of file ./bus.rs ##
+
+## file number: 2
+## starting ./cleanup.rs ##
+use crate::components::dbfactory::db;
+use mongodb::bson::doc;
+
+/// Delete every session whose `ends_at` is in the past.
+/// One `delete_many` — no per-document loop.
+pub async fn purge_expired_sessions() {
+    let now = chrono::Utc::now().to_rfc3339();
+
+    match db()
+        .sessions()
+        .delete_many(doc! { "ends_at": { "$lt": &now } })
+        .await
+    {
+        Ok(res) => {
+            if res.deleted_count > 0 {
+                println!("[cleanup] purged {} expired session(s)", res.deleted_count);
+            }
+        }
+        Err(e) => {
+            println!("[cleanup] PURGE SESSIONS ERROR: {}", e);
+        }
+    }
+}
+
+/// Spawn a background task that purges expired sessions every 30 minutes.
+/// Call once at startup, right after `init_db().await`.
+pub fn spawn_session_cleanup() {
+    tokio::spawn(async {
+        // run once immediately so a fresh boot also cleans up
+        purge_expired_sessions().await;
+
+        let mut interval = 
+        tokio::time::interval(std::time::Duration::from_secs(30 * 60));
+        interval.tick().await; // consume the immediate first tick
+
+        loop {
+            interval.tick().await;
+            purge_expired_sessions().await;
+        }
+    });
+}
+## ending of file ./cleanup.rs ##
+
+## file number: 3
+## starting ./complete_attempt.rs ##
+use axum::{response::IntoResponse, Json};
+use mongodb::bson::doc;
+
+use crate::components::dbfactory::db;
+use crate::identity::identities::{
+    AssigmentAttempt, AssigmentAttemptResource, Session,
+};
+
+pub async fn complete_attempt(
+    Json(body): Json<AssigmentAttemptResource>,
+) -> impl IntoResponse {
+    println!("════════════════════════════════════════════════════════════");
+    println!("[COMPLETE_ATTEMPT] ── INCOMING REQUEST ───────────────────");
+
+    // ── 1) LOAD THE SESSION ─────────────────────────────────────────
+    println!("[COMPLETE_ATTEMPT] STEP 1 ── looking up session");
+    let session: Session = match db()
+        .sessions()
+        .find_one(doc! { "token": &body.token })
+        .await
+    {
+        Ok(Some(s)) => {
+            println!(
+                "[COMPLETE_ATTEMPT] STEP 1 ✅ session found (id = {:?}, user = {:?})",
+                s.id, s.user
+            );
+            s
+        }
+        Ok(None) => {
+            println!("[COMPLETE_ATTEMPT] STEP 1 ❌ no session for that token");
+            return "FAIL:Invalid session".to_string();
+        }
+        Err(e) => {
+            println!("[COMPLETE_ATTEMPT] STEP 1 ❌ DB error: {}", e);
+            return "FAIL:Database error".to_string();
+        }
+    };
+
+    // ── 2) SESSION NOT EXPIRED ──────────────────────────────────────
+    println!("[COMPLETE_ATTEMPT] STEP 2 ── checking expiry");
+    let now = chrono::Utc::now();
+    let ends_at = match chrono::DateTime::parse_from_rfc3339(&session.ends_at) {
+        Ok(dt) => dt.with_timezone(&chrono::Utc),
+        Err(e) => {
+            println!("[COMPLETE_ATTEMPT] STEP 2 ❌ parse error: {}", e);
+            return "FAIL:Invalid session format".to_string();
+        }
+    };
+    if now >= ends_at {
+        println!("[COMPLETE_ATTEMPT] STEP 2 ❌ session expired");
+        return "FAIL:Session expired".to_string();
+    }
+    println!("[COMPLETE_ATTEMPT] STEP 2 ✅ session not expired");
+
+    // ── 3) FIND THE ATTEMPT BY session.id ───────────────────────────
+    // session.id == attempt.id (set at creation in start_attempt).
+    println!(
+        "[COMPLETE_ATTEMPT] STEP 3 ── looking up attempt by id = {:?}",
+        session.id
+    );
+    let attempt: AssigmentAttempt = match db()
+        .attempts()
+        .find_one(doc! { "id": &session.id })
+        .await
+    {
+        Ok(Some(a)) => {
+            println!(
+                "[COMPLETE_ATTEMPT] STEP 3 ✅ attempt found (user = {:?}, assigment_id = {:?})",
+                a.user, a.assigment_id
+            );
+            a
+        }
+        Ok(None) => {
+            println!("[COMPLETE_ATTEMPT] STEP 3 ❌ no attempt for session.id = {:?}", session.id);
+            return "FAIL:Attempt not found".to_string();
+        }
+        Err(e) => {
+            println!("[COMPLETE_ATTEMPT] STEP 3 ❌ DB error: {}", e);
+            return "FAIL:Database error".to_string();
+        }
+    };
+
+    // ── 4) SIZE CAP ─────────────────────────────────────────────────
+    if body.json.len() > 10_000_000 {
+        println!(
+            "[COMPLETE_ATTEMPT] STEP 4 ❌ payload too large ({} bytes)",
+            body.json.len()
+        );
+        return "FAIL:Payload too large (max 10 MB)".to_string();
+    }
+    println!("[COMPLETE_ATTEMPT] STEP 4 ✅ payload {} bytes", body.json.len());
+
+    // ── 5) FILL THE ATTEMPT WITH THE ANSWER JSON ────────────────────
+    println!("[COMPLETE_ATTEMPT] STEP 5 ── writing answers to attempt");
+    match db()
+        .attempts()
+        .update_one(
+            doc! { "id": &attempt.id },
+            doc! { "$set": {
+                "json": &body.json,
+            }},
+        )
+        .await
+    {
+        Ok(res) if res.matched_count > 0 => {
+            println!(
+                "[COMPLETE_ATTEMPT] STEP 5 ✅ attempt updated ({} bytes written)",
+                body.json.len()
+            );
+        }
+        Ok(_) => {
+            println!("[COMPLETE_ATTEMPT] STEP 5 ❌ attempt vanished mid-update");
+            return "FAIL:Attempt not found".to_string();
+        }
+        Err(e) => {
+            println!("[COMPLETE_ATTEMPT] STEP 5 ❌ DB error: {}", e);
+            return "FAIL:Database error".to_string();
+        }
+    }
+
+    // ── 6) DELETE THE SESSION ───────────────────────────────────────
+    println!("[COMPLETE_ATTEMPT] STEP 6 ── deleting session");
+    match db()
+        .sessions()
+        .delete_one(doc! { "token": &body.token })
+        .await
+    {
+        Ok(_) => println!("[COMPLETE_ATTEMPT] STEP 6 ✅ session deleted"),
+        Err(e) => {
+            // non-fatal — the session will expire on its own
+            println!("[COMPLETE_ATTEMPT] STEP 6 ⚠ delete error: {}", e);
+        }
+    }
+
+    // ── 7) RETURN ───────────────────────────────────────────────────
+    println!("[COMPLETE_ATTEMPT] STEP 7 ✅ ── DONE ──");
+    println!("════════════════════════════════════════════════════════════");
+    format!("OK:{}", attempt.id)
+}
+## ending of file ./complete_attempt.rs ##
+
+## file number: 4
+## starting ./get_assigment_info.rs ##
+use axum::{response::IntoResponse, Json};
+use mongodb::bson::doc;
+
+use crate::components::dbfactory::db;
+use crate::identity::identities::{
+    AssigmentInfo, RawAssigment, ResourceAccess, Session,
+};
+
+pub async fn get_assigment_info(Json(body): Json<ResourceAccess>) -> impl IntoResponse {
+    println!("════════════════════════════════════════════════════════════");
+    println!("[ASSIGMENT_INFO] ── INCOMING REQUEST ──────────────────────");
+
+    // ── 1) SESSION EXISTS ────────────────────────────────────────────
+    println!("[ASSIGMENT_INFO] STEP 1 ── looking up session");
+    let session: Session = match db()
+        .sessions()
+        .find_one(doc! { "token": &body.token })
+        .await
+    {
+        Ok(Some(s)) => {
+            println!("[ASSIGMENT_INFO] STEP 1 ✅ session found for user = {:?}", s.user);
+            s
+        }
+        Ok(None) => {
+            println!("[ASSIGMENT_INFO] STEP 1 ❌ no session for that token");
+            return "FAIL:Invalid session".to_string();
+        }
+        Err(e) => {
+            println!("[ASSIGMENT_INFO] STEP 1 ❌ DB error: {}", e);
+            return "FAIL:Database error".to_string();
+        }
+    };
+
+    // ── 2) SESSION NOT EXPIRED ───────────────────────────────────────
+    println!("[ASSIGMENT_INFO] STEP 2 ── checking expiry");
+    let now = chrono::Utc::now();
+    let ends_at = match chrono::DateTime::parse_from_rfc3339(&session.ends_at) {
+        Ok(dt) => dt.with_timezone(&chrono::Utc),
+        Err(e) => {
+            println!("[ASSIGMENT_INFO] STEP 2 ❌ parse error: {}", e);
+            return "FAIL:Invalid session format".to_string();
+        }
+    };
+    if now >= ends_at {
+        println!("[ASSIGMENT_INFO] STEP 2 ❌ session expired");
+        return "FAIL:Session expired".to_string();
+    }
+    println!("[ASSIGMENT_INFO] STEP 2 ✅ session not expired");
+
+    // ── 3) DETERMINE ROLE FROM session.user ─────────────────────────
+    println!("[ASSIGMENT_INFO] STEP 3 ── checking if user is a student or teacher");
+
+    let student = db()
+        .users()
+        .find_one(doc! { "id": &session.user })
+        .await
+        .ok()
+        .flatten();
+
+    let teacher_id: String = if let Some(student_doc) = student {
+        // ── STUDENT PATH ─────────────────────────────────────────────
+        println!("[ASSIGMENT_INFO] STEP 3 ✅ user is a student");
+        println!(
+            "[ASSIGMENT_INFO] STEP 3   student's `teacher` field = {:?}",
+            student_doc.teacher
+        );
+
+        // Resolve the teacher's id from the student's `teacher` field.
+        // The field may hold either the teacher's id or the teacher's name
+        // (legacy data). Try id first, fall back to name.
+        let by_id = db()
+            .teachers()
+            .find_one(doc! { "id": &student_doc.teacher })
+            .await
+            .ok()
+            .flatten();
+
+        if let Some(t) = by_id {
+            println!("[ASSIGMENT_INFO] STEP 3 ✅ teacher resolved by id = {:?}", t.id);
+            t.id
+        } else {
+            let by_name = db()
+                .teachers()
+                .find_one(doc! { "name": &student_doc.teacher })
+                .await
+                .ok()
+                .flatten();
+
+            match by_name {
+                Some(t) => {
+                    println!(
+                        "[ASSIGMENT_INFO] STEP 3 ✅ teacher resolved by name = {:?} → id = {:?}",
+                        t.name, t.id
+                    );
+                    t.id
+                }
+                None => {
+                    println!(
+                        "[ASSIGMENT_INFO] STEP 3 ❌ student's teacher {:?} matches no teacher",
+                        student_doc.teacher
+                    );
+                    return "FAIL:Teacher not found".to_string();
+                }
+            }
+        }
+    } else {
+        // ── TEACHER PATH ─────────────────────────────────────────────
+        let is_teacher = matches!(
+            db().teachers().find_one(doc! { "id": &session.user }).await,
+            Ok(Some(_))
+        );
+        if !is_teacher {
+            println!("[ASSIGMENT_INFO] STEP 3 ❌ user is neither student nor teacher");
+            return "FAIL:User not found".to_string();
+        }
+        println!("[ASSIGMENT_INFO] STEP 3 ✅ user is a teacher");
+        session.user.clone()
+    };
+
+    // ── 4) FIND THE ASSIGNMENT ──────────────────────────────────────
+    println!(
+        "[ASSIGMENT_INFO] STEP 4 ── fetching assignment for teacher = {:?}",
+        teacher_id
+    );
+    let assignment: RawAssigment = match db()
+        .raw_assigments()
+        .find_one(doc! { "teacher": &teacher_id })
+        .await
+    {
+        Ok(Some(a)) => {
+            println!(
+                "[ASSIGMENT_INFO] STEP 4 ✅ found assignment id = {:?}, label = {:?}",
+                a.id, a.label
+            );
+            a
+        }
+        Ok(None) => {
+            println!("[ASSIGMENT_INFO] STEP 4 ❌ no assignment for this teacher");
+            return "FAIL:No assignment found".to_string();
+        }
+        Err(e) => {
+            println!("[ASSIGMENT_INFO] STEP 4 ❌ DB error: {}", e);
+            return "FAIL:Database error".to_string();
+        }
+    };
+
+    // ── 5) LOOK FOR THIS STUDENT'S GRADED ATTEMPT ───────────────────
+    let mut grade = String::new();
+
+    if session.user != teacher_id {
+        // caller is a student
+        println!(
+            "[ASSIGMENT_INFO] STEP 5 ── looking for graded attempt by student = {:?} for assignment = {:?}",
+            session.user, assignment.id
+        );
+        match db()
+            .attempts()
+            .find_one(doc! {
+                "user":         &session.user,
+                "assigment_id": &assignment.id,
+                "grade":        { "$ne": "" },
+            })
+            .sort(doc! { "attempt": -1 })
+            .await
+        {
+            Ok(Some(a)) => {
+                println!("[ASSIGMENT_INFO] STEP 5 ✅ grade = {:?}", a.grade);
+                grade = a.grade;
+            }
+            Ok(None) => {
+                println!("[ASSIGMENT_INFO] STEP 5   no graded attempt yet");
+            }
+            Err(e) => {
+                println!("[ASSIGMENT_INFO] STEP 5 ⚠ attempt lookup error: {}", e);
+            }
+        }
+    } else {
+        println!("[ASSIGMENT_INFO] STEP 5   caller is a teacher — no per-attempt grade");
+    }
+
+    // ── 6) RETURN ───────────────────────────────────────────────────
+    let response = AssigmentInfo {
+        label: assignment.label,
+        assigment_type: assignment.assigment_type,
+        grade,
+    };
+
+    match serde_json::to_string(&response) {
+        Ok(json) => {
+            println!("[ASSIGMENT_INFO] STEP 6 ✅ ── DONE ── {}", json);
+            println!("════════════════════════════════════════════════════════════");
+            format!("OK:{}", json)
+        }
+        Err(e) => {
+            println!("[ASSIGMENT_INFO] STEP 6 ❌ serialize error: {}", e);
+            println!("════════════════════════════════════════════════════════════");
+            "FAIL:Failed to serialize result".to_string()
+        }
+    }
+}
+## ending of file ./get_assigment_info.rs ##
+
+## file number: 5
+## starting ./get_assigments.rs ##
+use axum::{response::IntoResponse, Json};
+use mongodb::bson::doc;
+use serde::Deserialize;
+
+use crate::components::dbfactory::db;
+use crate::identity::identities::{ RawAssigment, RawAssigmentRequest, ResourceAccess, Session, Teacher};
+
+pub async fn get_single_assigment(Json(body): Json<ResourceAccess>) -> impl IntoResponse {
+    println!("════════════════════════════════════════════════════════════");
+    println!("[GET_SINGLE] ── INCOMING REQUEST ──────────────────────────");
+
+    // ── 1) SESSION EXISTS ────────────────────────────────────────────
+    println!("[GET_SINGLE] STEP 1 ── looking up session");
+    let session: Session = match db()
+        .sessions()
+        .find_one(doc! { "token": &body.token })
+        .await
+    {
+        Ok(Some(s)) => {
+            println!("[GET_SINGLE] STEP 1 ✅ session found for user = {:?}", s.user);
+            s
+        }
+        Ok(None) => {
+            println!("[GET_SINGLE] STEP 1 ❌ no session for that token");
+            return "FAIL:Invalid session".to_string();
+        }
+        Err(e) => {
+            println!("[GET_SINGLE] STEP 1 ❌ DB error: {}", e);
+            return "FAIL:Database error".to_string();
+        }
+    };
+
+    // ── 2) SESSION NOT EXPIRED ───────────────────────────────────────
+    println!("[GET_SINGLE] STEP 2 ── checking expiry");
+    let now = chrono::Utc::now();
+    let ends_at = match chrono::DateTime::parse_from_rfc3339(&session.ends_at) {
+        Ok(dt) => dt.with_timezone(&chrono::Utc),
+        Err(e) => {
+            println!("[GET_SINGLE] STEP 2 ❌ parse error: {}", e);
+            return "FAIL:Invalid session format".to_string();
+        }
+    };
+    if now >= ends_at {
+        println!("[GET_SINGLE] STEP 2 ❌ session expired");
+        return "FAIL:Session expired".to_string();
+    }
+    println!("[GET_SINGLE] STEP 2 ✅ session not expired");
+
+    // ── 3) MUST BE A TEACHER ─────────────────────────────────────────
+    println!("[GET_SINGLE] STEP 3 ── verifying teacher");
+    let _teacher: Teacher = match db()
+        .teachers()
+        .find_one(doc! { "id": &session.user })
+        .await
+    {
+        Ok(Some(t)) => {
+            println!("[GET_SINGLE] STEP 3 ✅ teacher = {:?}", t.name);
+            t
+        }
+        Ok(None) => {
+            println!("[GET_SINGLE] STEP 3 ❌ not a teacher");
+            return "FAIL:Only teachers can read assignments".to_string();
+        }
+        Err(e) => {
+            println!("[GET_SINGLE] STEP 3 ❌ DB error: {}", e);
+            return "FAIL:Database error".to_string();
+        }
+    };
+
+    // ── 4) FETCH THE ASSIGNMENT ──────────────────────────────────────
+    println!("[GET_SINGLE] STEP 4 ── fetching assignment for teacher = {:?}", session.user);
+    let assignment: RawAssigment = match db()
+        .raw_assigments()
+        .find_one(doc! { "teacher": &session.user })
+        .await
+    {
+        Ok(Some(a)) => {
+            println!(
+                "[GET_SINGLE] STEP 4 ✅ found assignment id = {:?}, label = {:?}",
+                a.id, a.label
+            );
+            a
+        }
+        Ok(None) => {
+            println!("[GET_SINGLE] STEP 4 ❌ no assignment for this teacher");
+            return "FAIL:No assignment found".to_string();
+        }
+        Err(e) => {
+            println!("[GET_SINGLE] STEP 4 ❌ DB error: {}", e);
+            return "FAIL:Database error".to_string();
+        }
+    };
+
+    // ── 5) PROJECT TO RawAssigmentRequest ────────────────────────────
+    println!("[GET_SINGLE] STEP 5 ── serializing result");
+    let response = RawAssigmentRequest {
+        json: assignment.json,
+        max_attempts: assignment.max_attempts,
+        label: assignment.label,
+        assigment_type: assignment.assigment_type,
+        bond: assignment.bond,
+    };
+
+    match serde_json::to_string(&response) {
+        Ok(json) => {
+            println!("[GET_SINGLE] STEP 5 ✅ ── DONE ── returning {} bytes", json.len());
+            println!("════════════════════════════════════════════════════════════");
+            format!("OK:{}", json)
+        }
+        Err(e) => {
+            println!("[GET_SINGLE] STEP 5 ❌ serialize error: {}", e);
+            println!("════════════════════════════════════════════════════════════");
+            "FAIL:Failed to serialize result".to_string()
+        }
+    }
+}
+## ending of file ./get_assigments.rs ##
+
+## file number: 6
+## starting ./get_attempts.rs ##
+use axum::{response::IntoResponse, Json};
+use mongodb::bson::doc;
+use serde::Serialize;
+
+use crate::components::dbfactory::db;
+use crate::identity::identities::{
+    AssigmentAttempt, AttemptRow, ResourceAccess, Session, Teacher, UserInfo,
+};
+
+ 
+
+pub async fn get_attempts(Json(body): Json<ResourceAccess>) -> impl IntoResponse {
+    // ── 1) SESSION ──────────────────────────────────────────────────
+    let session: Session = match db()
+        .sessions()
+        .find_one(doc! { "token": &body.token })
+        .await
+    {
+        Ok(Some(s)) => s,
+        Ok(None) => return "FAIL:Invalid session".to_string(),
+        Err(e) => {
+            println!("GET ATTEMPTS SESSION ERROR: {}", e);
+            return "FAIL:Database error".to_string();
+        }
+    };
+
+    // ── 2) EXPIRY ───────────────────────────────────────────────────
+    let now = chrono::Utc::now();
+    let ends_at = match chrono::DateTime::parse_from_rfc3339(&session.ends_at) {
+        Ok(dt) => dt.with_timezone(&chrono::Utc),
+        Err(e) => {
+            println!("GET ATTEMPTS PARSE ERROR: {}", e);
+            return "FAIL:Invalid session format".to_string();
+        }
+    };
+    if now >= ends_at {
+        return "FAIL:Session expired".to_string();
+    }
+
+    // ── 3) RESOLVE ROLE ─────────────────────────────────────────────
+    let teacher_opt: Option<Teacher> = db()
+        .teachers()
+        .find_one(doc! { "id": &session.user })
+        .await
+        .ok()
+        .flatten();
+
+    if let Some(teacher) = teacher_opt {
+        // ── TEACHER PATH: all attempts from all their students ──────
+        let mut students_by_id: std::collections::HashMap<String, (String, String)> =
+            std::collections::HashMap::new();
+
+        let mut students_cursor = match db()
+            .users()
+            .find(doc! { "teacher": &teacher.id })
+            .await
+        {
+            Ok(c) => c,
+            Err(e) => {
+                println!("GET ATTEMPTS STUDENTS ERROR: {}", e);
+                return "FAIL:Database error".to_string();
+            }
+        };
+
+        while students_cursor.advance().await.unwrap_or(false) {
+            if let Ok(u) = students_cursor.deserialize_current() {
+                students_by_id.insert(u.id.clone(), (u.code, u.group));
+            }
+        }
+
+        if students_by_id.is_empty() {
+            return "OK:[]".to_string();
+        }
+
+        let student_ids: Vec<String> = students_by_id.keys().cloned().collect();
+
+        let mut cursor = match db()
+            .attempts()
+            .find(doc! { "user": { "$in": &student_ids } })
+            .await
+        {
+            Ok(c) => c,
+            Err(e) => {
+                println!("GET ATTEMPTS FIND ERROR: {}", e);
+                return "FAIL:Database error".to_string();
+            }
+        };
+
+        let mut rows: Vec<AttemptRow> = Vec::new();
+
+        while cursor.advance().await.unwrap_or(false) {
+            let a: AssigmentAttempt = match cursor.deserialize_current() {
+                Ok(a) => a,
+                Err(e) => {
+                    println!("GET ATTEMPTS DESERIALIZE ERROR: {}", e);
+                    continue;
+                }
+            };
+
+            let Some((code, group)) = students_by_id.get(&a.user) else {
+                continue;
+            };
+
+            rows.push(AttemptRow {
+                id: a.id,
+                user: a.user,
+                code: code.clone(),
+                group: group.clone(),
+                attempt: a.attempt,
+                assigment_label: a.assigment_label,
+                assigment_type: a.assigment_type,
+                assigment_id: a.assigment_id,
+                max_attempts: a.max_attempts,
+                grade: a.grade,
+                window: a.window,
+                json: a.json,
+            });
+        }
+
+        rows.sort_by(|a, b| {
+            a.group
+                .cmp(&b.group)
+                .then_with(|| numeric_suffix(&a.code).cmp(&numeric_suffix(&b.code)))
+                .then_with(|| a.attempt.cmp(&b.attempt))
+        });
+
+        return match serde_json::to_string(&rows) {
+            Ok(json) => format!("OK:{}", json),
+            Err(e) => {
+                println!("GET ATTEMPTS SERIALIZE ERROR: {}", e);
+                "FAIL:Failed to serialize result".to_string()
+            }
+        };
+    }
+
+    // ── STUDENT PATH: all attempts belonging to this student ────────
+    let student: UserInfo = match db()
+        .users()
+        .find_one(doc! { "id": &session.user })
+        .await
+    {
+        Ok(Some(s)) => s,
+        Ok(None) => return "FAIL:User not found".to_string(),
+        Err(e) => {
+            println!("GET ATTEMPTS USER ERROR: {}", e);
+            return "FAIL:Database error".to_string();
+        }
+    };
+
+    let mut cursor = match db()
+        .attempts()
+        .find(doc! { "user": &student.id })
+        .await
+    {
+        Ok(c) => c,
+        Err(e) => {
+            println!("GET ATTEMPTS FIND ERROR: {}", e);
+            return "FAIL:Database error".to_string();
+        }
+    };
+
+    let mut rows: Vec<AttemptRow> = Vec::new();
+
+    while cursor.advance().await.unwrap_or(false) {
+        let a: AssigmentAttempt = match cursor.deserialize_current() {
+            Ok(a) => a,
+            Err(e) => {
+                println!("GET ATTEMPTS DESERIALIZE ERROR: {}", e);
+                continue;
+            }
+        };
+
+        rows.push(AttemptRow {
+            id: a.id,
+            user: a.user,
+            code: student.code.clone(),
+            group: student.group.clone(),
+            attempt: a.attempt,
+            assigment_label: a.assigment_label,
+            assigment_type: a.assigment_type,
+            assigment_id: a.assigment_id,
+            max_attempts: a.max_attempts,
+            grade: a.grade,
+            window: a.window,
+            json: String::new(),   // student sees no submission json
+        });
+    }
+
+    rows.sort_by(|a, b| a.attempt.cmp(&b.attempt));
+
+    match serde_json::to_string(&rows) {
+        Ok(json) => format!("OK:{}", json),
+        Err(e) => {
+            println!("GET ATTEMPTS SERIALIZE ERROR: {}", e);
+            "FAIL:Failed to serialize result".to_string()
+        }
+    }
+}
+
+fn numeric_suffix(code: &str) -> u32 {
+    code.chars()
+        .skip_while(|c| !c.is_ascii_digit())
+        .collect::<String>()
+        .parse()
+        .unwrap_or(0)
+}
+## ending of file ./get_attempts.rs ##
+
+## file number: 7
+## starting ./get_groups.rs ##
+use crate::components::dbfactory::db;
+use crate::identity::identities::{Group, ResourceAccess, Session, Teacher, UserInfo};
+use axum::Json;
+use mongodb::bson::doc;
+use serde_json;
+
+pub async fn get_groups(Json(req): Json<ResourceAccess>) -> String {
+    // 1) Session exists?
+    let session: Session = match db()
+        .sessions()
+        .find_one(doc! { "token": &req.token })
+        .await
+    {
+        Ok(Some(s)) => s,
+        Ok(None) => return "FAIL:Invalid session".to_string(),
+        Err(e) => {
+            println!("GET GROUPS SESSION ERROR: {}", e);
+            return "FAIL:Database error".to_string();
+        }
+    };
+
+    // 2) Session not expired?
+    let now = chrono::Utc::now();
+    let ends_at = match chrono::DateTime::parse_from_rfc3339(&session.ends_at) {
+        Ok(dt) => dt.with_timezone(&chrono::Utc),
+        Err(e) => {
+            println!("GET GROUPS PARSE ERROR: {}", e);
+            return "FAIL:Invalid session format".to_string();
+        }
+    };
+    if now >= ends_at {
+        return "FAIL:Session expired".to_string();
+    }
+
+    // 3) Teacher exists — derived from session.user.
+    let teacher: Teacher = match db()
+        .teachers()
+        .find_one(doc! { "id": &session.user })
+        .await
+    {
+        Ok(Some(t)) => t,
+        Ok(None) => return "FAIL:Teacher not found".to_string(),
+        Err(e) => {
+            println!("GET GROUPS TEACHER ERROR: {}", e);
+            return "FAIL:Database error".to_string();
+        }
+    };
+
+    // ── Collect students belonging to this teacher ──────────────────────
+    let mut cursor = match db()
+        .users()
+        .find(doc! { "teacher": &teacher.id })
+        .await
+    {
+        Ok(c) => c,
+        Err(e) => {
+            println!("GET GROUPS FIND ERROR: {}", e);
+            return "FAIL:Database error".to_string();
+        }
+    };
+
+    let mut counts: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    while cursor.advance().await.unwrap_or(false) {
+        if let Ok(u) = cursor.deserialize_current() {
+            if !u.group.is_empty() {
+                *counts.entry(u.group).or_insert(0) += 1;
+            }
+        }
+    }
+
+    let groups: Vec<Group> = counts
+        .into_iter()
+        .map(|(name, size)| Group { name, size })
+        .collect();
+
+    match serde_json::to_string(&groups) {
+        Ok(json) => format!("OK:{}", json),
+        Err(e) => {
+            println!("GET GROUPS SERIALIZE ERROR: {}", e);
+            "FAIL:Failed to serialize groups".to_string()
+        }
+    }
+}
+## ending of file ./get_groups.rs ##
+
+## file number: 8
+## starting ./get_heartbeat.rs ##
+// src/actions/heartbeat.rs
+use axum::{
+    extract::{
+        ws::{Message, WebSocket, WebSocketUpgrade},
+        Query,
+    },
+    response::IntoResponse,
+};
+use mongodb::bson::doc;
+use serde::Deserialize;
+use std::time::Instant;
+use tokio::time::{interval, Duration};
+
+use crate::components::dbfactory::db;
+use crate::identity::identities::Session;
+
+// ─────────────────────────────────────────────────────────────────────
+// Tunables — tweak here
+// ─────────────────────────────────────────────────────────────────────
+
+/// How often the server sends a Ping frame.
+const HEARTBEAT_PING_INTERVAL_SECS: u64 = 1;
+
+/// How long the server tolerates silence from the client before
+/// considering the socket dead and closing it. Must be greater than
+/// the client's pong latency. Also acts as the "no pong received" cap
+/// even if the TCP socket is still technically open.
+const HEARTBEAT_TIMEOUT_SECS: u64 = 90;
+
+// ─────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct HeartbeatQuery {
+    pub token: String,
+}
+
+/// GET /heartbeat?token=...
+pub async fn get_heartbeat(
+    ws: WebSocketUpgrade,
+    Query(q): Query<HeartbeatQuery>,
+) -> impl IntoResponse {
+    println!("════════════════════════════════════════════════════════════");
+    println!("[HEARTBEAT] ── INCOMING UPGRADE ───────────────────────────");
+    println!("[HEARTBEAT] token = {:?}", mask(&q.token));
+    ws.on_upgrade(move |socket| handle(socket, q.token))
+}
+
+async fn handle(mut socket: WebSocket, token: String) {
+    let connected_at = Instant::now();
+    println!("[HEARTBEAT] STEP 1 ── socket accepted, looking up session");
+    println!("[HEARTBEAT] STEP 1   token = {:?}", mask(&token));
+
+    let session: Session = match db()
+        .sessions()
+        .find_one(doc! { "token": &token })
+        .await
+    {
+        Ok(Some(s)) => {
+            println!(
+                "[HEARTBEAT] STEP 1 ✅ session found (id = {:?}, user = {:?})",
+                s.id, s.user
+            );
+            s
+        }
+        Ok(None) => {
+            println!("[HEARTBEAT] STEP 1 ❌ no session for that token");
+            let _ = socket
+                .send(Message::Text("FAIL:Invalid session".into()))
+                .await;
+            let _ = socket.close().await;
+            return;
+        }
+        Err(e) => {
+            println!("[HEARTBEAT] STEP 1 ❌ DB error: {}", e);
+            let _ = socket
+                .send(Message::Text("FAIL:Database error".into()))
+                .await;
+            let _ = socket.close().await;
+            return;
+        }
+    };
+
+    println!("[HEARTBEAT] STEP 2 ── checking expiry");
+    let now = chrono::Utc::now();
+    let ends_at = match chrono::DateTime::parse_from_rfc3339(&session.ends_at) {
+        Ok(dt) => dt.with_timezone(&chrono::Utc),
+        Err(e) => {
+            println!("[HEARTBEAT] STEP 2 ❌ parse error: {}", e);
+            let _ = socket
+                .send(Message::Text("FAIL:Invalid session format".into()))
+                .await;
+            let _ = socket.close().await;
+            return;
+        }
+    };
+    println!("[HEARTBEAT] STEP 2   now = {}, ends_at = {}", now, ends_at);
+    if now >= ends_at {
+        println!("[HEARTBEAT] STEP 2 ❌ expired");
+        let _ = socket
+            .send(Message::Text("FAIL:Session expired".into()))
+            .await;
+        let _ = socket.close().await;
+        return;
+    }
+    println!("[HEARTBEAT] STEP 2 ✅ session not expired");
+
+    println!(
+        "[HEARTBEAT] STEP 3 ✅ connected (user = {:?}, expires = {})",
+        session.user, session.ends_at
+    );
+
+    if let Err(e) = socket.send(Message::Text("OK:connected".into())).await {
+        println!("[HEARTBEAT] STEP 3 ⚠ failed to send OK:connected: {}", e);
+        return;
+    }
+    println!("[HEARTBEAT] STEP 3 ✅ sent OK:connected to client");
+
+    println!(
+        "[HEARTBEAT] STEP 4 ── entering keep-alive loop (ping every {} s, timeout {} s)",
+        HEARTBEAT_PING_INTERVAL_SECS, HEARTBEAT_TIMEOUT_SECS
+    );
+
+    let mut tick = interval(Duration::from_secs(HEARTBEAT_PING_INTERVAL_SECS));
+    let mut tick_count: u64 = 0;
+
+    // last time we received *any* frame from the client
+    let mut last_seen = Instant::now();
+    // last time we sent a ping that hasn't been pong'd
+    let mut last_ping_sent: Option<Instant> = None;
+
+    loop {
+        tokio::select! {
+            _ = tick.tick() => {
+                tick_count += 1;
+                println!(
+                    "[HEARTBEAT] STEP 4   tick #{} — sending ping (last client frame {} s ago)",
+                    tick_count,
+                    last_seen.elapsed().as_secs()
+                );
+                if let Err(e) = socket.send(Message::Ping(Vec::new())).await {
+                    println!("[HEARTBEAT] STEP 4 ❌ ping failed (client gone): {}", e);
+                    break;
+                }
+                last_ping_sent = Some(Instant::now());
+                println!("[HEARTBEAT] STEP 4   tick #{} ✅ ping sent", tick_count);
+
+                // timeout check: if we sent a ping and never heard back
+                // within HEARTBEAT_TIMEOUT_SECS, the connection is dead
+                // even if the TCP layer hasn't noticed yet.
+                if let Some(sent_at) = last_ping_sent {
+                    if sent_at.elapsed().as_secs() >= HEARTBEAT_TIMEOUT_SECS {
+                        println!(
+                            "[HEARTBEAT] STEP 4 ❌ no pong for {} s (last client frame {} s ago) — closing",
+                            sent_at.elapsed().as_secs(),
+                            last_seen.elapsed().as_secs()
+                        );
+                        let _ = socket.send(Message::Close(None)).await;
+                        break;
+                    }
+                }
+            }
+
+            msg = socket.recv() => {
+                match msg {
+                    Some(Ok(Message::Text(t))) => {
+                        last_seen = Instant::now();
+                        last_ping_sent = None; // any client frame clears the pending ping
+                        println!(
+                            "[HEARTBEAT] STEP 4   ← text frame (len = {}) = {:?} (last client frame reset)",
+                            t.len(),
+                            if t.len() > 64 { &t[..64] } else { &t }
+                        );
+                        if t == "ping" {
+                            println!("[HEARTBEAT] STEP 4   ← client ping, replying pong");
+                            if let Err(e) = socket.send(Message::Text("pong".into())).await {
+                                println!("[HEARTBEAT] STEP 4 ❌ pong send failed: {}", e);
+                                break;
+                            }
+                            println!("[HEARTBEAT] STEP 4   ✅ pong sent");
+                        }
+                    }
+                    Some(Ok(Message::Binary(b))) => {
+                        last_seen = Instant::now();
+                        last_ping_sent = None;
+                        println!(
+                            "[HEARTBEAT] STEP 4   ← binary frame ({} bytes), ignoring",
+                            b.len()
+                        );
+                    }
+                    Some(Ok(Message::Pong(p))) => {
+                        last_seen = Instant::now();
+                        last_ping_sent = None;
+                        println!(
+                            "[HEARTBEAT] STEP 4   ← pong ({} bytes) — connection alive (ping→pong {} s)",
+                            p.len(),
+                            last_ping_sent.map(|t| t.elapsed().as_secs()).unwrap_or(0)
+                        );
+                    }
+                    Some(Ok(Message::Ping(p))) => {
+                        last_seen = Instant::now();
+                        last_ping_sent = None;
+                        println!(
+                            "[HEARTBEAT] STEP 4   ← ping from client ({} bytes) — axum auto-replies",
+                            p.len()
+                        );
+                    }
+                    Some(Ok(Message::Close(frame))) => {
+                        let lifetime = connected_at.elapsed().as_secs();
+                        match frame {
+                            Some(f) => println!(
+                                "[HEARTBEAT] STEP 4   ← close frame (code = {}, reason = {:?}) — socket lived {} s",
+                                f.code, f.reason, lifetime
+                            ),
+                            None => println!(
+                                "[HEARTBEAT] STEP 4   ← close frame (no body) — socket lived {} s",
+                                lifetime
+                            ),
+                        }
+                        break;
+                    }
+                    None => {
+                        println!(
+                            "[HEARTBEAT] STEP 4   ← stream ended (None) — socket lived {} s",
+                            connected_at.elapsed().as_secs()
+                        );
+                        break;
+                    }
+                    Some(Err(e)) => {
+                        println!(
+                            "[HEARTBEAT] STEP 4 ❌ ws error: {} — socket lived {} s",
+                            e,
+                            connected_at.elapsed().as_secs()
+                        );
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    println!(
+        "[HEARTBEAT] STEP 5 ── loop exited after {} tick(s), total lifetime {} s (user = {:?})",
+        tick_count,
+        connected_at.elapsed().as_secs(),
+        session.user
+    );
+    println!("════════════════════════════════════════════════════════════");
+}
+
+fn mask(token: &str) -> String {
+    if token.len() <= 8 {
+        return "*".repeat(token.len());
+    }
+    format!("{}…{}", &token[..4], &token[token.len() - 4..])
+}
+## ending of file ./get_heartbeat.rs ##
+
+## file number: 9
+## starting ./get_passwords.rs ##
+use axum::{response::IntoResponse, Json};
+use mongodb::bson::doc;
+use serde::Serialize;
+
+use crate::components::dbfactory::db;
+use crate::identity::identities::{RequestGroupAction, Session, StudentPassword, Teacher, UserInfo};
+
+pub async fn get_group_passwords(
+    Json(body): Json<RequestGroupAction>,
+) -> impl IntoResponse {
+    // ── 1) SESSION EXISTS ────────────────────────────────────────────
+    let session: Session = match db()
+        .sessions()
+        .find_one(doc! { "token": &body.token })
+        .await
+    {
+        Ok(Some(s)) => s,
+        Ok(None) => return "FAIL:Invalid session".to_string(),
+        Err(e) => {
+            println!("GET GROUP PASSWORDS SESSION ERROR: {}", e);
+            return "FAIL:Database error".to_string();
+        }
+    };
+
+    // ── 2) SESSION NOT EXPIRED ───────────────────────────────────────
+    let now = chrono::Utc::now();
+    let ends_at = match chrono::DateTime::parse_from_rfc3339(&session.ends_at) {
+        Ok(dt) => dt.with_timezone(&chrono::Utc),
+        Err(e) => {
+            println!("GET GROUP PASSWORDS PARSE ERROR: {}", e);
+            return "FAIL:Invalid session format".to_string();
+        }
+    };
+    if now >= ends_at {
+        return "FAIL:Session expired".to_string();
+    }
+
+    // ── 3) MUST BE A TEACHER ─────────────────────────────────────────
+    let teacher: Teacher = match db()
+        .teachers()
+        .find_one(doc! { "id": &session.user })
+        .await
+    {
+        Ok(Some(t)) => t,
+        Ok(None) => return "FAIL:Only teachers can view passwords".to_string(),
+        Err(e) => {
+            println!("GET GROUP PASSWORDS TEACHER ERROR: {}", e);
+            return "FAIL:Database error".to_string();
+        }
+    };
+
+    // ── 4) FETCH STUDENTS IN THAT GROUP FOR THIS TEACHER ────────────
+    let mut cursor = match db()
+        .users()
+        .find(doc! { "group": &body.group, "teacher": &teacher.id })
+        .await
+    {
+        Ok(c) => c,
+        Err(e) => {
+            println!("GET GROUP PASSWORDS FIND ERROR: {}", e);
+            return "FAIL:Database error".to_string();
+        }
+    };
+
+    let mut students: Vec<UserInfo> = Vec::new();
+    while cursor.advance().await.unwrap_or(false) {
+        if let Ok(u) = cursor.deserialize_current() {
+            students.push(u);
+        }
+    }
+
+    // ── 5) SORT BY THE NUMERIC SUFFIX IN THE CODE ───────────────────
+    students.sort_by_key(|u| {
+        u.code
+            .chars()
+            .skip_while(|c| !c.is_ascii_digit())
+            .collect::<String>()
+            .parse::<u32>()
+            .unwrap_or(0)
+    });
+
+    // ── 6) PROJECT TO { code, password } ────────────────────────────
+    let rows: Vec<StudentPassword> = students
+        .into_iter()
+        .map(|u| StudentPassword {
+            code: u.code,
+            password: u.password,
+        })
+        .collect();
+
+    // ── 7) RETURN AS JSON ───────────────────────────────────────────
+    match serde_json::to_string(&rows) {
+        Ok(json) => format!("OK:{}", json),
+        Err(e) => {
+            println!("GET GROUP PASSWORDS SERIALIZE ERROR: {}", e);
+            "FAIL:Failed to serialize result".to_string()
+        }
+    }
+}
+## ending of file ./get_passwords.rs ##
+
+## file number: 10
+## starting ./get_resource.rs ##
+use axum::{
+    extract::Path,
+    http::{header, HeaderMap, StatusCode},
+    response::IntoResponse,
+    Json,
+};
+use mongodb::bson::doc;
+use std::path::PathBuf;
+use tokio::fs::File;
+use tokio::io::AsyncReadExt;
+
+use crate::components::dbfactory::db;
+use crate::identity::identities::{ResourceAccess, Session};
+
+const UPLOAD_DIR: &str = "./uploads";
+
+pub async fn get_resource(
+    Path(name): Path<String>,
+    Json(body): Json<ResourceAccess>,
+) -> impl IntoResponse {
+    println!("[get_resource] ──────────────────────────────────────");
+    println!("[get_resource] requested name = {:?}", name);
+    println!("[get_resource] token (first 8) = {:?}", &body.token.chars().take(8).collect::<String>());
+    println!("[get_resource] UPLOAD_DIR = {:?}", UPLOAD_DIR);
+    println!("[get_resource] cwd = {:?}", std::env::current_dir().ok());
+
+    // ── 1) Sanitize ─────────────────────────────────────────────────
+    if name.is_empty()
+        || name.contains('/')
+        || name.contains('\\')
+        || name.contains("..")
+    {
+        println!("[get_resource] REJECT: bad name");
+        return (StatusCode::BAD_REQUEST, "FAIL:Invalid resource name").into_response();
+    }
+
+    // ── 2) Session lookup ───────────────────────────────────────────
+    println!("[get_resource] looking up session…");
+    let session: Session = match db()
+        .sessions()
+        .find_one(doc! { "token": &body.token })
+        .await
+    {
+        Ok(Some(s)) => {
+            println!("[get_resource] session found for user = {:?}", s.user);
+            s
+        }
+        Ok(None) => {
+            println!("[get_resource] REJECT: no session for that token");
+            return (StatusCode::UNAUTHORIZED, "FAIL:Invalid session").into_response();
+        }
+        Err(e) => {
+            println!("[get_resource] DB ERROR: {}", e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, "FAIL:Database error").into_response();
+        }
+    };
+
+    // ── 3) Expiry ───────────────────────────────────────────────────
+    let now = chrono::Utc::now();
+    let ends_at = match chrono::DateTime::parse_from_rfc3339(&session.ends_at) {
+        Ok(dt) => dt.with_timezone(&chrono::Utc),
+        Err(e) => {
+            println!("[get_resource] PARSE ERROR: {}", e);
+            return (StatusCode::UNAUTHORIZED, "FAIL:Invalid session format").into_response();
+        }
+    };
+    println!("[get_resource] now = {}, ends_at = {}", now, ends_at);
+    if now >= ends_at {
+        println!("[get_resource] REJECT: session expired");
+        return (StatusCode::UNAUTHORIZED, "FAIL:Session expired").into_response();
+    }
+
+    // ── 4) Open file ────────────────────────────────────────────────
+    let path = PathBuf::from(UPLOAD_DIR).join(&name);
+    println!("[get_resource] resolving file path = {:?}", path);
+    println!("[get_resource] path exists = {}", path.exists());
+
+    let mut file = match File::open(&path).await {
+        Ok(f) => {
+            println!("[get_resource] file opened OK");
+            f
+        }
+        Err(e) => {
+            println!("[get_resource] REJECT: cannot open file: {}", e);
+            return (StatusCode::NOT_FOUND, "FAIL:Resource not found").into_response();
+        }
+    };
+
+    // ── 5) Read ─────────────────────────────────────────────────────
+    let mut bytes = Vec::new();
+    match file.read_to_end(&mut bytes).await {
+        Ok(n) => println!("[get_resource] read {} bytes", n),
+        Err(e) => {
+            println!("[get_resource] READ ERROR: {}", e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, "FAIL:Read error").into_response();
+        }
+    }
+
+    if bytes.is_empty() {
+        println!("[get_resource] WARN: file is empty on disk");
+    }
+
+    // ── 6) Content-Type ─────────────────────────────────────────────
+    let mime = mime_guess::from_path(&path)
+        .first_or_octet_stream()
+        .to_string();
+    println!("[get_resource] mime = {:?}", mime);
+
+    let mut headers = HeaderMap::new();
+    headers.insert(header::CONTENT_TYPE, mime.parse().unwrap());
+    headers.insert(
+        header::CONTENT_DISPOSITION,
+        format!("inline; filename=\"{}\"", name).parse().unwrap(),
+    );
+
+    println!("[get_resource] SUCCESS: returning {} bytes", bytes.len());
+    (StatusCode::OK, headers, bytes).into_response()
+}
+## ending of file ./get_resource.rs ##
+
+## file number: 11
+## starting ./grade_attempt.rs ##
+use axum::{response::IntoResponse, Json};
+use mongodb::bson::doc;
+
+use crate::components::dbfactory::db;
+use crate::identity::identities::{
+    AssigmentAttempt, AttemptGradeRequest, Session, Teacher, UserInfo,
+};
+
+pub async fn grade_attempt(
+    Json(body): Json<AttemptGradeRequest>,
+) -> impl IntoResponse {
+    println!("════════════════════════════════════════════════════════════");
+    println!("[GRADE_ATTEMPT] ── INCOMING REQUEST ──────────────────────");
+    println!("[GRADE_ATTEMPT] token (first 8) = {:?}", &body.token.chars().take(8).collect::<String>());
+    println!("[GRADE_ATTEMPT] attempt id     = {:?}", body.attempt);
+    println!("[GRADE_ATTEMPT] grade          = {:?}", body.grade);
+
+    // ── 1) SESSION EXISTS ────────────────────────────────────────────
+    println!("[GRADE_ATTEMPT] STEP 1 ── looking up session");
+    let session: Session = match db()
+        .sessions()
+        .find_one(doc! { "token": &body.token })
+        .await
+    {
+        Ok(Some(s)) => {
+            println!("[GRADE_ATTEMPT] STEP 1 ✅ session found for user = {:?}", s.user);
+            s
+        }
+        Ok(None) => {
+            println!("[GRADE_ATTEMPT] STEP 1 ❌ no session for that token");
+            return "FAIL:Invalid session".to_string();
+        }
+        Err(e) => {
+            println!("[GRADE_ATTEMPT] STEP 1 ❌ DB error: {}", e);
+            return "FAIL:Database error".to_string();
+        }
+    };
+
+    // ── 2) SESSION NOT EXPIRED ───────────────────────────────────────
+    println!("[GRADE_ATTEMPT] STEP 2 ── checking expiry");
+    let now = chrono::Utc::now();
+    let ends_at = match chrono::DateTime::parse_from_rfc3339(&session.ends_at) {
+        Ok(dt) => dt.with_timezone(&chrono::Utc),
+        Err(e) => {
+            println!("[GRADE_ATTEMPT] STEP 2 ❌ parse error: {}", e);
+            return "FAIL:Invalid session format".to_string();
+        }
+    };
+    if now >= ends_at {
+        println!("[GRADE_ATTEMPT] STEP 2 ❌ session expired");
+        return "FAIL:Session expired".to_string();
+    }
+    println!("[GRADE_ATTEMPT] STEP 2 ✅ session not expired");
+
+    // ── 3) MUST BE A TEACHER ────────────────────────────────────────
+    println!("[GRADE_ATTEMPT] STEP 3 ── verifying teacher");
+    let teacher: Teacher = match db()
+        .teachers()
+        .find_one(doc! { "id": &session.user })
+        .await
+    {
+        Ok(Some(t)) => {
+            println!("[GRADE_ATTEMPT] STEP 3 ✅ teacher = {:?}", t.name);
+            t
+        }
+        Ok(None) => {
+            println!("[GRADE_ATTEMPT] STEP 3 ❌ caller is not a teacher");
+            return "FAIL:Only teachers can grade attempts".to_string();
+        }
+        Err(e) => {
+            println!("[GRADE_ATTEMPT] STEP 3 ❌ DB error: {}", e);
+            return "FAIL:Database error".to_string();
+        }
+    };
+
+    // ── 4) VALIDATE GRADE ───────────────────────────────────────────
+    println!("[GRADE_ATTEMPT] STEP 4 ── validating grade");
+    let grade = body.grade.trim();
+    if !grade.is_empty() {
+        match grade.parse::<u32>() {
+            Ok(n) if n <= 4 => {
+                println!("[GRADE_ATTEMPT] STEP 4 ✅ grade = {}", n);
+            }
+            _ => {
+                println!(
+                    "[GRADE_ATTEMPT] STEP 4 ❌ grade {:?} is not 0-4 or empty",
+                    grade
+                );
+                return "FAIL:Grade must be 0-4 or empty".to_string();
+            }
+        }
+    } else {
+        println!("[GRADE_ATTEMPT] STEP 4 ✅ grade cleared (ungraded)");
+    }
+
+    // ── 5) FIND THE ATTEMPT ─────────────────────────────────────────
+    println!("[GRADE_ATTEMPT] STEP 5 ── looking up attempt = {:?}", body.attempt);
+    let attempt: AssigmentAttempt = match db()
+        .attempts()
+        .find_one(doc! { "id": &body.attempt })
+        .await
+    {
+        Ok(Some(a)) => {
+            println!(
+                "[GRADE_ATTEMPT] STEP 5 ✅ attempt found (user = {:?}, assigment = {:?})",
+                a.user, a.assigment_id
+            );
+            a
+        }
+        Ok(None) => {
+            println!("[GRADE_ATTEMPT] STEP 5 ❌ no attempt with id = {:?}", body.attempt);
+            return "FAIL:Attempt not found".to_string();
+        }
+        Err(e) => {
+            println!("[GRADE_ATTEMPT] STEP 5 ❌ DB error: {}", e);
+            return "FAIL:Database error".to_string();
+        }
+    };
+
+    // ── 6) VERIFY OWNERSHIP VIA THE STUDENT ─────────────────────────
+    // The teacher may have already wiped the assignment (update_assigment
+    // replaces it wholesale). We cannot rely on raw_assigments still
+    // containing the id the attempt points at. Instead, verify that the
+    // attempt's student belongs to this teacher — that's the durable
+    // relationship. If student.teacher == teacher.id, the attempt was
+    // made under this teacher's authority, period.
+    println!(
+        "[GRADE_ATTEMPT] STEP 6 ── verifying attempt's student belongs to teacher = {:?}",
+        teacher.id
+    );
+    let student: UserInfo = match db()
+        .users()
+        .find_one(doc! { "id": &attempt.user })
+        .await
+    {
+        Ok(Some(s)) => s,
+        Ok(None) => {
+            println!(
+                "[GRADE_ATTEMPT] STEP 6 ❌ attempt's user {:?} not found",
+                attempt.user
+            );
+            return "FAIL:Student not found".to_string();
+        }
+        Err(e) => {
+            println!("[GRADE_ATTEMPT] STEP 6 ❌ DB error: {}", e);
+            return "FAIL:Database error".to_string();
+        }
+    };
+
+    if student.teacher != teacher.id {
+        // Fall back to a name comparison for older docs that stored the
+        // teacher's name instead of their id.
+        let matches_by_name = student.teacher == teacher.name;
+        if !matches_by_name {
+            println!(
+                "[GRADE_ATTEMPT] STEP 6 ❌ student {:?} belongs to {:?}, not to teacher {:?}",
+                student.id, student.teacher, teacher.id
+            );
+            return "FAIL:Not authorized to grade this attempt".to_string();
+        }
+        println!("[GRADE_ATTEMPT] STEP 6 ✅ ownership matched by teacher name (legacy doc)");
+    } else {
+        println!("[GRADE_ATTEMPT] STEP 6 ✅ student belongs to this teacher");
+    }
+
+    // ── 7) WRITE THE GRADE ──────────────────────────────────────────
+    println!("[GRADE_ATTEMPT] STEP 7 ── writing grade = {:?}", grade);
+    match db()
+        .attempts()
+        .update_one(
+            doc! { "id": &attempt.id },
+            doc! { "$set": { "grade": grade } },
+        )
+        .await
+    {
+        Ok(res) if res.matched_count > 0 => {
+            println!(
+                "[GRADE_ATTEMPT] STEP 7 ✅ grade written ({} bytes)",
+                grade.len()
+            );
+        }
+        Ok(_) => {
+            println!("[GRADE_ATTEMPT] STEP 7 ❌ attempt vanished mid-update");
+            return "FAIL:Attempt not found".to_string();
+        }
+        Err(e) => {
+            println!("[GRADE_ATTEMPT] STEP 7 ❌ DB error: {}", e);
+            return "FAIL:Database error".to_string();
+        }
+    }
+
+    // ── 8) RETURN ───────────────────────────────────────────────────
+    println!("[GRADE_ATTEMPT] STEP 8 ✅ ── DONE ──");
+    println!("════════════════════════════════════════════════════════════");
+    "OK:Grade updated".to_string()
+}   
+## ending of file ./grade_attempt.rs ##
+
+## file number: 12
+## starting ./login.rs ##
+// use std::fmt::format;
+
+use argon2::password_hash::Encoding::Crypt;
+// use argon2::password_hash::Encoding::Crypt;
+use axum::Json;
+use mongodb::bson::doc;
+
+use crate::{components::{dbfactory::db, encrypt::CryptoService}, identity::identities::{Session, TeacherLogin, UserInfo, UserLogin}};
+ 
+
+pub async fn login(Json(credentials): Json<UserLogin>) -> String {
+    let user = match db().users().find_one(doc! { "code": &credentials.code }).await {
+        Ok(Some(user)) => user,
+        Ok(None) => {
+            println!("FAIL TO LOGIN CODE: {} PASSWORD: {}", credentials.code, credentials.password);
+            return "FAIL:User not found".to_string();
+        }
+        Err(e) => {
+            println!("LOGIN: Database error: {}", e);
+            return "FAIL:There was a data base error".to_string();
+        }
+    };
+
+    if credentials.password == user.password {
+        println!("LOGIN SUCESSFULL");
+        let token = CryptoService::random_string(32);
+
+        let now = chrono::Utc::now();
+        let session = Session{
+            id: CryptoService::random_string(32),
+            token: token.clone(),
+            user: user.id,
+            updated_at: now.to_rfc3339(),
+            created_at: now.to_rfc3339(),
+            ends_at: (now + chrono::Duration::hours(1)).to_rfc3339(),
+        };
+
+    if let Err(e) = db().sessions().insert_one(session).await {
+        println!("FAIL to create session: {}", e);
+        return "FAIL:No se pudo crear la sesión".to_string();
+    }
+        return format!("OK:{}", token);
+    }
+
+    format!("FAIL:Either password or user are invalid")
+}
+
+
+pub async fn loginAdmin(Json(credentials): Json<TeacherLogin>) -> String {
+    let user = match db().teachers().find_one(doc! { "name": &credentials.name }).await {
+        Ok(Some(user)) => user,
+        Ok(None) => {
+            println!("FAIL TO LOGIN CODE: {} PASSWORD: {}", credentials.name, credentials.password);
+            return "FAIL:User not found".to_string();
+        }
+        Err(e) => {
+            println!("LOGIN: Database error: {}", e);
+            return "FAIL:There was a data base error".to_string();
+        }
+    };
+
+    let crypto = CryptoService::new();
+    let hash = credentials.password;
+    println!("[{}]\n[{}]\n[{}]", user.name, &hash, &user.password_hash);
+
+    match crypto.verify_non_deterministic_hash(&hash, &user.password_hash) {
+        Ok(true) => {
+            println!("LOGIN SUCESSFULL");
+            let token = CryptoService::random_string(32);
+
+            let now = chrono::Utc::now();
+            let session = Session {
+                id: CryptoService::random_string(32),
+                user: user.id,
+                token: token.clone(),
+                updated_at: now.to_rfc3339(),
+                created_at: now.to_rfc3339(),
+                ends_at: (now + chrono::Duration::hours(1)).to_rfc3339(),
+            };
+
+            if let Err(e) = db().sessions().insert_one(session).await {
+                println!("FAIL to create session: {}", e);
+                return "FAIL:No se pudo crear la sesión".to_string();
+            }
+
+            format!("OK:{}", token)
+        }
+        Ok(false) => {
+            println!("FAIL TO LOGIN");
+            "FAIL:Incorrect user or Password".to_string()
+        }
+        Err(e) => {
+            println!("{:?}", e);
+            "FAIL:Invalid password or user.".to_string()
+        }
+    }
+}
+## ending of file ./login.rs ##
+
+## file number: 13
+## starting ./mod.rs ##
+mod singup;
+mod upload;
+mod login; 
+mod upload_card;
+mod session;
+mod sync; 
+mod update_groups;
+mod refreshers;
+mod get_groups; 
+mod upload_file;
+mod cleanup;
+mod get_resource;
+mod update_assigment;
+mod get_passwords;
+mod rotate_passwords;
+mod get_assigments;
+mod get_assigment_info;
+mod start_attempt;
+mod complete_attempt;
+mod get_attempts; 
+mod grade_attempt;
+mod get_heartbeat; 
+// pub use singup::signup;
+// pub use upload::upload;
+pub use get_heartbeat::get_heartbeat; 
+pub use grade_attempt::grade_attempt;
+pub use get_attempts::get_attempts; 
+pub use complete_attempt::complete_attempt; 
+pub use start_attempt::start_attempt; 
+pub use get_assigment_info::get_assigment_info;
+pub use get_assigments::get_single_assigment;
+pub use rotate_passwords::rotate_passwords;  
+pub use get_passwords::get_group_passwords;
+pub use update_assigment::update_assigment;
+pub use get_resource::get_resource;
+pub use update_groups::update_groups;
+pub use get_groups::get_groups; 
+pub use login::*; 
+pub use refreshers::*;
+pub use upload_file::upload_file; 
+pub use cleanup::spawn_session_cleanup;
+// pub use upload_card::add_payment_method;
+// pub use session::get_user_session;
+// pub use sync::update_user_session;
+## ending of file ./mod.rs ##
+
+## file number: 14
+## starting ./refreshers.rs ##
+use crate::components::dbfactory::db;
+use crate::components::encrypt::CryptoService;
+use crate::identity::identities::Session;
+use axum::Json;
+use mongodb::bson::doc;
+use serde::Deserialize;
+
+#[derive(Debug, Deserialize)]
+pub struct SessionRequest {
+    pub token: String,
+}
+
+/// POST /session/check
+/// Body: { "token": "..." }
+/// Returns:
+///   "OK:<new_token>" → valid, refreshed (rotated token + slid 1 hour)
+///   "EXPIRED"        → past ends_at
+///   "NOT_FOUND"      → no session
+///   "ERROR:..."      → db/parse failure
+pub async fn check_session(Json(body): Json<SessionRequest>) -> String {
+    let session: Session = match db()
+        .sessions()
+        .find_one(doc! { "token": &body.token })
+        .await
+    {
+        Ok(Some(s)) => s,
+        Ok(None) => return "NOT_FOUND".to_string(),
+        Err(e) => {
+            println!("CHECK SESSION DB ERROR: {}", e);
+            return format!("ERROR:{}", e);
+        }
+    };
+
+    let now = chrono::Utc::now();
+    let ends_at = match chrono::DateTime::parse_from_rfc3339(&session.ends_at) {
+        Ok(dt) => dt.with_timezone(&chrono::Utc),
+        Err(e) => {
+            println!("CHECK SESSION PARSE ERROR: {}", e);
+            return format!("ERROR:{}", e);
+        }
+    };
+
+    if now >= ends_at {
+        return "EXPIRED".to_string();
+    }
+
+    let new_token = CryptoService::random_string(32);
+    let new_end = (now + chrono::Duration::hours(1)).to_rfc3339();
+
+    if let Err(e) = db()
+        .sessions()
+        .update_one(
+            doc! { "token": &body.token },
+            doc! { "$set": {
+                "token":      &new_token,
+                "updated_at": now.to_rfc3339(),
+                "ends_at":    new_end,
+            }},
+        )
+        .await
+    {
+        println!("CHECK SESSION REFRESH ERROR: {}", e);
+        return format!("ERROR:{}", e);
+    }
+
+    format!("OK:{}", new_token)
+}
+
+/// POST /session/refresh
+/// Body: { "token": "..." }
+/// Returns:
+///   "OK:<new_token>" → exists, still valid, rotated + extended 1 hour
+///   "EXPIRED"        → past ends_at (deleted, not revived)
+///   "NOT_FOUND"      → no session
+///   "ERROR:..."      → db/parse failure
+pub async fn refresh_session(Json(body): Json<SessionRequest>) -> String {
+    let session: Session = match db()
+        .sessions()
+        .find_one(doc! { "token": &body.token })
+        .await
+    {
+        Ok(Some(s)) => s,
+        Ok(None) => return "NOT_FOUND".to_string(),
+        Err(e) => {
+            println!("REFRESH SESSION DB ERROR: {}", e);
+            return format!("ERROR:{}", e);
+        }
+    };
+
+    let now = chrono::Utc::now();
+    let ends_at = match chrono::DateTime::parse_from_rfc3339(&session.ends_at) {
+        Ok(dt) => dt.with_timezone(&chrono::Utc),
+        Err(e) => {
+            println!("REFRESH SESSION PARSE ERROR: {}", e);
+            return format!("ERROR:{}", e);
+        }
+    };
+
+    if now >= ends_at {
+        let _ = db()
+            .sessions()
+            .delete_one(doc! { "token": &body.token })
+            .await;
+        return "EXPIRED".to_string();
+    }
+
+    let new_token = CryptoService::random_string(32);
+    let new_end = (now + chrono::Duration::hours(1)).to_rfc3339();
+
+    if let Err(e) = db()
+        .sessions()
+        .update_one(
+            doc! { "token": &body.token },
+            doc! { "$set": {
+                "token":      &new_token,
+                "updated_at": now.to_rfc3339(),
+                "ends_at":    new_end,
+            }},
+        )
+        .await
+    {
+        println!("REFRESH SESSION UPDATE ERROR: {}", e);
+        return format!("ERROR:{}", e);
+    }
+
+    format!("OK:{}", new_token)
+}
+## ending of file ./refreshers.rs ##
+
+## file number: 15
+## starting ./rotate_passwords.rs ##
+use axum::{response::IntoResponse, Json};
+use mongodb::bson::doc;
+use serde::Serialize;
+
+use crate::components::dbfactory::db;
+use crate::components::encrypt::CryptoService;
+use crate::identity::identities::{RequestGroupAction, Session, Teacher, UserInfo};
+
+#[derive(Debug, Serialize)]
+pub struct StudentPassword {
+    code: String,
+    password: String,
+}
+
+pub async fn rotate_passwords(
+    Json(body): Json<RequestGroupAction>,
+) -> impl IntoResponse {
+    // ── 1) SESSION EXISTS ────────────────────────────────────────────
+    let session: Session = match db()
+        .sessions()
+        .find_one(doc! { "token": &body.token })
+        .await
+    {
+        Ok(Some(s)) => s,
+        Ok(None) => return "FAIL:Invalid session".to_string(),
+        Err(e) => {
+            println!("ROTATE PASSWORDS SESSION ERROR: {}", e);
+            return "FAIL:Database error".to_string();
+        }
+    };
+
+    // ── 2) SESSION NOT EXPIRED ───────────────────────────────────────
+    let now = chrono::Utc::now();
+    let ends_at = match chrono::DateTime::parse_from_rfc3339(&session.ends_at) {
+        Ok(dt) => dt.with_timezone(&chrono::Utc),
+        Err(e) => {
+            println!("ROTATE PASSWORDS PARSE ERROR: {}", e);
+            return "FAIL:Invalid session format".to_string();
+        }
+    };
+    if now >= ends_at {
+        return "FAIL:Session expired".to_string();
+    }
+
+    // ── 3) MUST BE A TEACHER ─────────────────────────────────────────
+    let teacher: Teacher = match db()
+        .teachers()
+        .find_one(doc! { "id": &session.user })
+        .await
+    {
+        Ok(Some(t)) => t,
+        Ok(None) => return "FAIL:Only teachers can rotate passwords".to_string(),
+        Err(e) => {
+            println!("ROTATE PASSWORDS TEACHER ERROR: {}", e);
+            return "FAIL:Database error".to_string();
+        }
+    };
+
+    // ── 4) FETCH STUDENTS IN THAT GROUP FOR THIS TEACHER ────────────
+    let mut cursor = match db()
+        .users()
+        .find(doc! { "group": &body.group, "teacher": &teacher.id })
+        .await
+    {
+        Ok(c) => c,
+        Err(e) => {
+            println!("ROTATE PASSWORDS FIND ERROR: {}", e);
+            return "FAIL:Database error".to_string();
+        }
+    };
+
+    let mut students: Vec<UserInfo> = Vec::new();
+    while cursor.advance().await.unwrap_or(false) {
+        if let Ok(u) = cursor.deserialize_current() {
+            students.push(u);
+        }
+    }
+
+    // ── 5) SORT BY NUMERIC SUFFIX IN CODE ───────────────────────────
+    students.sort_by_key(|u| {
+        u.code
+            .chars()
+            .skip_while(|c| !c.is_ascii_digit())
+            .collect::<String>()
+            .parse::<u32>()
+            .unwrap_or(0)
+    });
+
+    // ── 6) ROTATE + UPDATE EACH STUDENT ────────────────────────────
+    let mut rows: Vec<StudentPassword> = Vec::with_capacity(students.len());
+
+    for student in students {
+        let new_password = CryptoService::random_string(4).to_uppercase();
+
+        match db()
+            .users()
+            .update_one(
+                doc! { "id": &student.id },
+                doc! { "$set": { "password": &new_password } },
+            )
+            .await
+        {
+            Ok(res) if res.matched_count > 0 => {
+                rows.push(StudentPassword {
+                    code: student.code,
+                    password: new_password,
+                });
+            }
+            Ok(_) => {
+                println!("ROTATE PASSWORDS: student {} vanished mid-update", student.code);
+            }
+            Err(e) => {
+                println!("ROTATE PASSWORDS UPDATE ERROR ({}): {}", student.code, e);
+            }
+        }
+    }
+
+    // ── 7) RETURN AS JSON ───────────────────────────────────────────
+    match serde_json::to_string(&rows) {
+        Ok(json) => format!("OK:{}", json),
+        Err(e) => {
+            println!("ROTATE PASSWORDS SERIALIZE ERROR: {}", e);
+            "FAIL:Failed to serialize result".to_string()
+        }
+    }
+}
+## ending of file ./rotate_passwords.rs ##
+
+## file number: 16
+## starting ./session.rs ##
+
+// use axum::Json;
+// use mongodb::bson::doc;
+// use crate::{components::dbfactory::db, identity::{PaymentMethod, Wallet, identities::{Card, TripHistory, UserInfo, UserSession, UserSessionRequest}}};
+ 
+// // use crate::config::load_config;
+
+// // use crate::components::dbfactory::Sqlitedb;
+ 
+// // singup
+// pub async fn get_user_session(Json(user_info): Json<UserSessionRequest>) -> String {
+//     println!("Session start request");
+//     let user = match db().users().find_one(doc! { "id": user_info.user_id.clone() }).await {
+//         Ok(Some(user)) => user,
+//         Ok(None) => {
+//             return "FAIL:Usuario no encontrado".to_string();
+//         }
+//         Err(e) => {
+//             println!("SESSION START: Database error: {}", e);
+//             return "FAIL:Error en la base de datos".to_string();
+//         }
+//     };
+
+//     let person = UserInfo{
+//         id:user.id,
+//         name:user.name,
+//         last_name:user.last_name,
+//         date_of_birth:user.date_of_birth,
+//         email:user.email,
+//         phone:user.phone};
+    
+//    let wallet = match db().wallets().find_one(doc! { "id": user_info.user_id.clone() }).await {
+//         Ok(Some(w)) => w,
+//         Ok(None) => {
+//             return "FAIL:Cartera no encontrada".to_string();
+//         }
+//         Err(e) => {
+//             println!("WALLET SEARCH: Database error: {}", e);
+//             return "FAIL:Error en la base de datos".to_string();
+//         }
+//     };
+//     let mut cards : Vec<Card> = Vec::new(); 
+//     for method in &wallet.payment_methods{
+//         match method{
+//                 PaymentMethod::Card { id,card_type,cvv, name_on_card, card_number, expiry_date, created_at, updated_at }=>{
+//                     let last_four = card_number[card_number.len() - 4..].to_string();
+//                        cards.push(Card {
+//                         id: id.clone(),
+//                         name_on_card: name_on_card.clone(),
+//                         card_number: format!("**** **** **** {}", last_four),
+//                         expiry_date: expiry_date.clone(),
+//                         cvv: cvv.clone(),
+//                         card_type: card_type.clone(),
+//                     });
+
+
+//                 }
+//                 PaymentMethod::Balance { id, amount, created_at, updated_at }=>{
+//                     cards.push(Card {
+//                         id: id.clone(),
+//                         name_on_card: "BALANCE".to_string(),
+//                         card_number: format!("{}",amount),
+//                         expiry_date: String::new(),
+//                         cvv: String::new(),
+//                         card_type: "Balance".to_string(),
+//                     });
+
+//                 }
+//         }
+
+
+//     }
+  
+//     let mut history: Vec<TripHistory> = Vec::new();
+
+//     let mut passenger_trips = match db()
+//         .passenger_trips()
+//         .find(doc! { "user_id": user_info.user_id.clone() })
+//         .await
+//     {
+//         Ok(cursor) => cursor,
+//         Err(e) => {
+//             println!("SESSION START: Passenger trips database error: {}", e);
+//             return "FAIL:Error en la base de datos".to_string();
+//         }
+//     };
+
+//     while passenger_trips.advance().await.unwrap_or(false) {
+//         match passenger_trips.deserialize_current() {
+//             Ok(passenger_trip) => {
+//                 let transaction = match db()
+//                     .transactions()
+//                     .find_one(doc! { "id": passenger_trip.transaction_id.clone() })
+//                     .await
+//                 {
+//                     Ok(Some(transaction)) => transaction,
+//                     Ok(None) => {
+//                         return "FAIL:Transaction not found".to_string();
+//                     }
+//                     Err(e) => {
+//                         println!("SESSION START: Transaction database error: {}", e);
+//                         return "FAIL:Error en la base de datos".to_string();
+//                     }
+//                 };
+
+                
+
+//                 let mut card = match transaction.payment_method {
+//                     PaymentMethod::Card { id, name_on_card, cvv,card_number, card_type, expiry_date, created_at, updated_at }=>{
+//                       let last_four = card_number[card_number.len() - 4..].to_string();
+//                       let pm = Card { 
+//                         id, 
+//                         name_on_card,
+//                         card_number: format!("**** **** **** {}", last_four),
+//                         expiry_date:expiry_date, 
+//                         cvv: cvv,
+//                         card_type: card_type
+//                      };
+//                       pm
+//                     }
+//                     PaymentMethod::Balance { id, amount, created_at, updated_at }=>{
+//                         let pm = Card { 
+//                                    id: id.clone(),
+//                                     name_on_card: "BALANCE".to_string(),
+//                                     card_number: format!("{}",amount),
+//                                     expiry_date: String::new(),
+//                                     cvv: String::new(),
+//                                     card_type: "Balance".to_string(),
+//                             };
+//                         pm
+//                     }
+//                 };
+//                 let trip_history = TripHistory {
+//                     id: passenger_trip.id,
+//                     route_name: String::new(),
+//                     driver: String::new(),
+//                     drop_off_point: String::new(),
+//                     price: passenger_trip.final_amount,
+//                     payment_method: card,
+//                     date: passenger_trip.boarded_at,
+//                     status: passenger_trip.status,
+//                 };
+
+//                 history.push(trip_history);
+//             }
+
+//             Err(e) => {
+//                 println!("SESSION START: Passenger trip parse error: {}", e);
+//                 return "FAIL:Error procesando viajes".to_string();
+//             }
+//         }
+//     }
+
+
+
+//     let settings = match db()
+//         .user_settings()
+//         .find_one(doc! { "id": user_info.user_id.clone() })
+//         .await
+//     {
+//         Ok(Some(settings)) => settings,
+//         Ok(None) => {
+//             return "FAIL:Configuración del usuario no encontrada".to_string();
+//         }
+//         Err(e) => {
+//             println!("SESSION START: User settings database error: {}", e);
+//             return "FAIL:Error en la base de datos".to_string();
+//         }
+//     };
+
+
+//     let session  = UserSession{
+//         user:person,
+//         cards:cards,
+//         history:history,
+//         settings:settings
+//     };
+//     let json = match serde_json::to_string(&session) {
+//         Ok(json) => json,
+//         Err(e) => {
+//             println!("SESSION START: Serialization error: {}", e);
+//             return "FAIL:Error al serializar la sesión".to_string();
+//         }
+//     };
+
+
+    
+//     return json; 
+    
+
+// }
+
+
+## ending of file ./session.rs ##
+
+## file number: 17
+## starting ./singup.rs ##
+
+// use axum::Json;
+// use mongodb::bson::doc;
+
+// use crate::utils::{random_uuid,get_dr_time};
+
+// // use crate::config::load_config;
+
+// use crate::{components::{dbfactory::{Mongo, db}, encrypt::CryptoService}};
+// // use crate::components::dbfactory::Sqlitedb;
+ 
+// // singup
+// pub async fn signup(Json(user): Json<UserClient>) -> String {
+//     println!("{:#?}", user);
+    
+//     //  heck if email already exists
+//     let existing = db()
+//         .users()
+//         .find_one(doc! { "email": &user.email })
+//         .await;
+//     match existing {
+//     Ok(Some(_)) => {
+//         println!("Email already exists");
+//         return "FAIL:El correo ya está registrado".to_string();
+//     }
+//     Err(e) => {
+//         println!("Database error: {}", e);
+//         return "FAIL:Error en la base de datos".to_string();
+//     }
+//     Ok(None) => {
+//         let crypto = CryptoService::new(); 
+//         let date = get_dr_time(); 
+//         let re_hash = crypto.non_deterministic_hash(&user.password_hash); 
+//         let mut rehash_value = String::new(); 
+//         let user_id = random_uuid("user");
+//         if re_hash.is_ok() {
+//             rehash_value = re_hash.unwrap(); 
+//         } else {
+//             println!("Hashing error: {:?}", re_hash.err());
+//             return "FAIL:Error al procesar la contraseña".to_string();
+//         }
+//         let new_user = User {
+//             email: user.email,
+//             name: user.name,
+//             last_name: user.last_name,
+//             password_hash: rehash_value,
+//             salt: CryptoService::salt(),
+//             id: user_id.clone(),
+//             date_of_birth: user.date_of_birth,
+//             phone: user.phone,
+//             user_type: user.user_type,
+//             discount_percentage: 0,
+//             is_active: true,
+//             verified: false,
+//             created_at: date.clone(),
+//             updated_at: date.clone(),
+//         };
+        
+//         match db().users().insert_one(new_user).await {
+//             Ok(result) => {
+//                 println!("User created with ID: {:?}", result.inserted_id);
+                
+//                 let now = get_dr_time();
+//                 let balance_id = random_uuid("pm");
+//                 let wallet = Wallet {
+//                     default_id:balance_id.clone(),
+//                     id: user_id.clone(),
+//                     user_id: user_id.clone(),
+//                     payment_methods: vec![
+//                         PaymentMethod::Balance {
+//                             id: balance_id,
+//                             amount: 0.0,
+//                             created_at: date.clone(),
+//                             updated_at: date.clone(),
+//                         }
+//                     ],
+//                     created_at: date.clone(),
+//                     updated_at: date.clone(),
+//                 };
+                
+//                 match db().wallets().insert_one(wallet).await {
+//                     Ok(_) => println!("Wallet created for user {}", user_id.clone()),
+//                     Err(e) => {
+//                         println!("FAIL to create wallet: {}", e);
+//                         return "FAIL:No se pudo crear el usuario".to_string();
+//                     }
+//                 }
+//                 // return format!("OK:{}", user_id.clone());
+//             }
+//             Err(e) => {
+//                 println!("FAIL to create user: {}", e);
+//                 return "FAIL:No se pudo crear el usuario".to_string();
+//             }
+//         }
+
+//         let notifications = NotificationSettings{
+//             trip_updates:true,
+//             security_alerts:true,
+//             price_changes:true,
+//             promotions:true
+//         };
+//         let user_settings = UserSettings{
+//             id:user_id.clone(),
+//             notifications,
+//             language:"Español".to_string(),
+//             created_at:date.clone(),
+//             updated_at:date.clone()
+//         };
+//         match db().user_settings().insert_one(user_settings).await {
+//             Ok(_) => println!("User Settings created for user {}", user_id),
+//             Err(e) => {
+//                 println!("FAIL to create wallet: {}", e);
+//                 return "FAIL:No se pudo crear el usuario".to_string();
+//             }
+//         }
+//         return format!("OK:{}",user_id)
+//     }
+// }
+// }
+## ending of file ./singup.rs ##
+
+## file number: 18
+## starting ./start_attempt.rs ##
+use axum::{response::IntoResponse, Json};
+use mongodb::bson::doc;
+use serde::Deserialize;
+
+use crate::components::dbfactory::db;
+use crate::components::encrypt::CryptoService;
+use crate::identity::identities::{
+    AssigmentAttempt, AssigmentAttemptResource, RawAssigment, ResourceAccess, Session, UserInfo,
+};
+
+const ATTEMPT_WINDOW_MINUTES: u32 = 15;
+
+pub async fn start_attempt(Json(body): Json<ResourceAccess>) -> impl IntoResponse {
+    println!("════════════════════════════════════════════════════════════");
+    println!("[START_ATTEMPT] ── INCOMING REQUEST ───────────────────────");
+
+    // ── 1) SESSION EXISTS ────────────────────────────────────────────
+    println!("[START_ATTEMPT] STEP 1 ── looking up session");
+    let session: Session = match db()
+        .sessions()
+        .find_one(doc! { "token": &body.token })
+        .await
+    {
+        Ok(Some(s)) => {
+            println!("[START_ATTEMPT] STEP 1 ✅ session found for user = {:?}", s.user);
+            s
+        }
+        Ok(None) => {
+            println!("[START_ATTEMPT] STEP 1 ❌ no session for that token");
+            return "FAIL:Invalid session".to_string();
+        }
+        Err(e) => {
+            println!("[START_ATTEMPT] STEP 1 ❌ DB error: {}", e);
+            return "FAIL:Database error".to_string();
+        }
+    };
+
+    // ── 2) SESSION NOT EXPIRED ───────────────────────────────────────
+    println!("[START_ATTEMPT] STEP 2 ── checking expiry");
+    let now = chrono::Utc::now();
+    let ends_at = match chrono::DateTime::parse_from_rfc3339(&session.ends_at) {
+        Ok(dt) => dt.with_timezone(&chrono::Utc),
+        Err(e) => {
+            println!("[START_ATTEMPT] STEP 2 ❌ parse error: {}", e);
+            return "FAIL:Invalid session format".to_string();
+        }
+    };
+    if now >= ends_at {
+        println!("[START_ATTEMPT] STEP 2 ❌ session expired");
+        return "FAIL:Session expired".to_string();
+    }
+    println!("[START_ATTEMPT] STEP 2 ✅ session not expired");
+
+    // ── 3) MUST BE A STUDENT ─────────────────────────────────────────
+    println!("[START_ATTEMPT] STEP 3 ── verifying student = {:?}", session.user);
+    let student: UserInfo = match db()
+        .users()
+        .find_one(doc! { "id": &session.user })
+        .await
+    {
+        Ok(Some(u)) => {
+            println!(
+                "[START_ATTEMPT] STEP 3 ✅ student found, teacher = {:?}",
+                u.teacher
+            );
+            u
+        }
+        Ok(None) => {
+            println!("[START_ATTEMPT] STEP 3 ❌ not a student");
+            return "FAIL:Only students can start attempts".to_string();
+        }
+        Err(e) => {
+            println!("[START_ATTEMPT] STEP 3 ❌ DB error: {}", e);
+            return "FAIL:Database error".to_string();
+        }
+    };
+
+    // ── 4) RESOLVE THE STUDENT'S TEACHER ID ─────────────────────────
+    let teacher_id: String = {
+        let by_id = db()
+            .teachers()
+            .find_one(doc! { "id": &student.teacher })
+            .await
+            .ok()
+            .flatten();
+
+        if let Some(t) = by_id {
+            t.id
+        } else {
+            let by_name = db()
+                .teachers()
+                .find_one(doc! { "name": &student.teacher })
+                .await
+                .ok()
+                .flatten();
+            match by_name {
+                Some(t) => t.id,
+                None => {
+                    println!(
+                        "[START_ATTEMPT] STEP 4 ❌ student's teacher {:?} not found",
+                        student.teacher
+                    );
+                    return "FAIL:Teacher not found".to_string();
+                }
+            }
+        }
+    };
+    println!("[START_ATTEMPT] STEP 4 ✅ teacher resolved = {:?}", teacher_id);
+
+    // ── 5) FIND THE ASSIGNMENT ──────────────────────────────────────
+    println!("[START_ATTEMPT] STEP 5 ── fetching assignment for teacher = {:?}", teacher_id);
+    let assignment: RawAssigment = match db()
+        .raw_assigments()
+        .find_one(doc! { "teacher": &teacher_id })
+        .await
+    {
+        Ok(Some(a)) => {
+            println!(
+                "[START_ATTEMPT] STEP 5 ✅ assignment id = {:?}, label = {:?}, type = {:?}",
+                a.id, a.label, a.assigment_type
+            );
+            a
+        }
+        Ok(None) => {
+            println!("[START_ATTEMPT] STEP 5 ❌ no assignment for this teacher");
+            return "FAIL:No assignment found".to_string();
+        }
+        Err(e) => {
+            println!("[START_ATTEMPT] STEP 5 ❌ DB error: {}", e);
+            return "FAIL:Database error".to_string();
+        }
+    };
+
+    // ── 6) DETERMINE NEXT ATTEMPT NUMBER ────────────────────────────
+    println!(
+        "[START_ATTEMPT] STEP 6 ── counting previous attempts by user = {:?} for assignment = {:?}",
+        session.user, assignment.id
+    );
+    let previous_count = match db()
+        .attempts()
+        .count_documents(doc! {
+            "user":         &session.user,
+            "assigment_id": &assignment.id,
+        })
+        .await
+    {
+        Ok(c) => {
+            println!("[START_ATTEMPT] STEP 6   previous attempts = {}", c);
+            c as u32
+        }
+        Err(e) => {
+            println!("[START_ATTEMPT] STEP 6 ❌ count error: {}", e);
+            return "FAIL:Database error".to_string();
+        }
+    };
+
+    let next_attempt = previous_count + 1;
+    println!("[START_ATTEMPT] STEP 6 ✅ this attempt = {}", next_attempt);
+
+    // ── 7) ENFORCE max_attempts ─────────────────────────────────────
+    if next_attempt > assignment.max_attempts {
+        println!(
+            "[START_ATTEMPT] STEP 7 ❌ max attempts reached ({}/{})",
+            previous_count, assignment.max_attempts
+        );
+        return format!(
+            "FAIL:Maximum attempts reached ({}/{})",
+            previous_count, assignment.max_attempts
+        );
+    }
+    println!(
+        "[START_ATTEMPT] STEP 7 ✅ attempt {} of {}",
+        next_attempt, assignment.max_attempts
+    );
+
+    // ── 8) CREATE THE ATTEMPT RECORD ────────────────────────────────
+    // Snapshot the assignment's identity (id, label, type) onto the
+    // attempt itself so the log survives the assignment being wiped
+    // by a future update_assigment call.
+    println!("[START_ATTEMPT] STEP 8 ── creating attempt record");
+    let attempt_id = CryptoService::random_string(32);
+    let attempt = AssigmentAttempt {
+        id: attempt_id.clone(),
+        user: session.user.clone(),
+        attempt: next_attempt,
+        assigment_id: assignment.id.clone(),
+        assigment_label: assignment.label.clone(),
+        assigment_type: assignment.assigment_type.clone(),
+        max_attempts: assignment.max_attempts,
+        grade: String::new(),
+        window: ATTEMPT_WINDOW_MINUTES,
+        json: String::new(),
+    };
+
+    if let Err(e) = db().attempts().insert_one(&attempt).await {
+        println!("[START_ATTEMPT] STEP 8 ❌ insert error: {}", e);
+        return "FAIL:Database error".to_string();
+    }
+    println!(
+        "[START_ATTEMPT] STEP 8 ✅ attempt id = {:?} (label = {:?}, type = {:?})",
+        attempt_id, attempt.assigment_label, attempt.assigment_type
+    );
+
+    // ── 9) ISSUE A SHORT-LIVED "attempt" SESSION ────────────────────
+    println!("[START_ATTEMPT] STEP 9 ── issuing attempt session");
+    let attempt_token = CryptoService::random_string(32);
+    let attempt_session = Session {
+        id: attempt_id.clone(),
+        token: attempt_token.clone(),
+        user: session.user,
+        created_at: now.to_rfc3339(),
+        updated_at: now.to_rfc3339(),
+        ends_at: (now + chrono::Duration::minutes(ATTEMPT_WINDOW_MINUTES as i64))
+            .to_rfc3339(),
+    };
+
+    if let Err(e) = db().sessions().insert_one(&attempt_session).await {
+        println!("[START_ATTEMPT] STEP 9 ❌ insert error: {}", e);
+        return "FAIL:Database error".to_string();
+    }
+    println!(
+        "[START_ATTEMPT] STEP 9 ✅ attempt session issued (expires in {} min)",
+        ATTEMPT_WINDOW_MINUTES
+    );
+
+    // ── 10) RETURN JSON + TOKEN ─────────────────────────────────────
+    let response = AssigmentAttemptResource {
+        json: assignment.json,
+        token: attempt_token,
+    };
+
+    match serde_json::to_string(&response) {
+        Ok(json) => {
+            println!("[START_ATTEMPT] STEP 10 ✅ ── DONE ── {} bytes", json.len());
+            println!("════════════════════════════════════════════════════════════");
+            format!("OK:{}", json)
+        }
+        Err(e) => {
+            println!("[START_ATTEMPT] STEP 10 ❌ serialize error: {}", e);
+            println!("════════════════════════════════════════════════════════════");
+            "FAIL:Failed to serialize result".to_string()
+        }
+    }
+}
+## ending of file ./start_attempt.rs ##
+
+## file number: 19
+## starting ./sync.rs ##
+
+// use axum::Json;
+// use mongodb::bson::doc;
+// use crate::{components::dbfactory::db, identity::{PaymentMethod, Wallet, identities::{Card, TripHistory, UserInfo, UserSession, UserSessionRequest}}, utils::get_dr_time};
+ 
+// // use crate::config::load_config;
+
+// // use crate::components::dbfactory::Sqlitedb;
+ 
+// // singup
+
+// pub async fn update_user_session(Json(session): Json<UserSession>) -> String {
+    
+//     println!("UPDATE SESSION REQUEST");
+//     println!("RAW REQUEST: {:#?}",session);
+//     // ------------------------------------------------------------
+//     // USER
+//     // ------------------------------------------------------------
+//     let mut user = match db()
+//         .users()
+//         .find_one(doc! { "id": session.user.id.clone() })
+//         .await
+//     {
+//         Ok(Some(user)) => user,
+//         Ok(None) => {
+//             return "FAIL:Usuario no encontrado".to_string();
+//         }
+//         Err(e) => {
+//             println!("UPDATE SESSION: User database error: {}", e);
+//             return "FAIL:Error en la base de datos".to_string();
+//         }
+//     };
+
+//     user.name = session.user.name.clone();
+//     user.last_name = session.user.last_name.clone();
+//     user.date_of_birth = session.user.date_of_birth.clone();
+//     user.email = session.user.email.clone();
+//     user.phone = session.user.phone.clone();
+//     user.updated_at = get_dr_time();
+
+//     if let Err(e) = db()
+//         .users()
+//         .replace_one(doc! { "id": user.id.clone() }, &user)
+//         .await
+//     {
+//         println!("UPDATE SESSION: Failed updating user: {}", e);
+//         return "FAIL:No se pudo actualizar el usuario".to_string();
+//     }
+
+
+
+
+
+    
+//     // ------------------------------------------------------------
+//     // WALLET
+//     // ------------------------------------------------------------
+//     let mut wallet = match db()
+//         .wallets()
+//         .find_one(doc! { "user_id": session.user.id.clone() })
+//         .await
+//     {
+//         Ok(Some(wallet)) => wallet,
+//         Ok(None) => {
+//             return "FAIL:Cartera no encontrada".to_string();
+//         }
+//         Err(e) => {
+//             println!("UPDATE SESSION: Wallet database error: {}", e);
+//             return "FAIL:Error en la base de datos".to_string();
+//         }
+//     };
+
+//     let now = get_dr_time();
+
+//    wallet.payment_methods.clear();
+
+// for card in &session.cards {
+//     if card.card_type.to_lowercase() == "balance" {
+//         wallet.payment_methods.push(
+//             PaymentMethod::Balance {
+//                 id: card.id.clone(),
+//                 amount: card.card_number.parse::<f64>().unwrap_or(0.0),
+//                 created_at: now.clone(),
+//                 updated_at: now.clone(),
+//             }
+//         );
+//     } else {
+//         wallet.payment_methods.push(
+//             PaymentMethod::Card {
+//                 id: card.id.clone(),
+//                 name_on_card: card.name_on_card.clone(),
+//                 card_number: card.card_number.clone(),
+//                 expiry_date: card.expiry_date.clone(),
+//                 cvv: card.cvv.clone(),
+//                 card_type: card.card_type.clone(),
+//                 created_at: now.clone(),
+//                 updated_at: now.clone(),
+//             }
+//         );
+//     }
+// }
+
+// wallet.updated_at = now.clone();
+
+// if let Err(e) = db()
+//     .wallets()
+//     .replace_one(doc! { "id": wallet.id.clone() }, &wallet)
+//     .await
+// {
+//     println!("UPDATE SESSION: Failed updating wallet: {}", e);
+//     return "FAIL:No se pudo actualizar la cartera".to_string();
+// }
+
+
+
+
+
+
+
+
+//     // ------------------------------------------------------------
+//     // SETTINGS
+//     // ------------------------------------------------------------
+//     let mut settings = match db()
+//         .user_settings()
+//         .find_one(doc! { "id": session.user.id.clone() })
+//         .await
+//     {
+//         Ok(Some(settings)) => settings,
+//         Ok(None) => {
+//             return "FAIL:Configuración del usuario no encontrada".to_string();
+//         }
+//         Err(e) => {
+//             println!("UPDATE SESSION: Settings database error: {}", e);
+//             return "FAIL:Error en la base de datos".to_string();
+//         }
+//     };
+
+//     settings.notifications = session.settings.notifications.clone();
+//     settings.language = session.settings.language.clone();
+//     settings.updated_at = now;
+
+//     if let Err(e) = db()
+//         .user_settings()
+//         .replace_one(doc! { "id": settings.id.clone() }, &settings)
+//         .await
+//     {
+//         println!("UPDATE SESSION: Failed updating settings: {}", e);
+//         return "FAIL:No se pudo actualizar la configuración".to_string();
+//     }
+
+//     "OK".to_string()
+// }
+## ending of file ./sync.rs ##
+
+## file number: 20
+## starting ./update_assigment.rs ##
+use axum::{response::IntoResponse, Json};
+use mongodb::bson::doc;
+use serde::Deserialize;
+
+use crate::components::dbfactory::db;
+use crate::components::encrypt::CryptoService;
+use crate::identity::identities::{RawAssigment, Session, Teacher, UpdateAssigmentRequest};
+
+const UPLOAD_DIR: &str = "./uploads";
+
+pub async fn update_assigment(Json(body): Json<UpdateAssigmentRequest>) -> impl IntoResponse {
+    println!("════════════════════════════════════════════════════════════");
+    println!("[UPDATE_ASSIGMENT] ── INCOMING REQUEST ────────────────────");
+    println!("[UPDATE_ASSIGMENT] token        = {:?}", mask(&body.token));
+    println!("[UPDATE_ASSIGMENT] label        = {:?}", body.label);
+    println!("[UPDATE_ASSIGMENT] type         = {:?}", body.assigment_type);
+    println!("[UPDATE_ASSIGMENT] max_attempts = {}", body.max_attempts);
+    println!("[UPDATE_ASSIGMENT] bond         = {:?}", body.bond);
+    println!("[UPDATE_ASSIGMENT] json_len     = {} bytes", body.json.len());
+
+    // ── 1) SESSION EXISTS ────────────────────────────────────────────
+    println!("[UPDATE_ASSIGMENT] STEP 1 ── looking up session");
+    let session: Session = match db()
+        .sessions()
+        .find_one(doc! { "token": &body.token })
+        .await
+    {
+        Ok(Some(s)) => {
+            println!("[UPDATE_ASSIGMENT] STEP 1 ✅ session found for user = {:?}", s.user);
+            s
+        }
+        Ok(None) => {
+            println!("[UPDATE_ASSIGMENT] STEP 1 ❌ no session for that token");
+            return "FAIL:Invalid session".to_string();
+        }
+        Err(e) => {
+            println!("[UPDATE_ASSIGMENT] STEP 1 ❌ DB ERROR: {}", e);
+            return "FAIL:Database error".to_string();
+        }
+    };
+
+    // ── 2) SESSION NOT EXPIRED ───────────────────────────────────────
+    println!("[UPDATE_ASSIGMENT] STEP 2 ── checking expiry");
+    let now = chrono::Utc::now();
+    let ends_at = match chrono::DateTime::parse_from_rfc3339(&session.ends_at) {
+        Ok(dt) => dt.with_timezone(&chrono::Utc),
+        Err(e) => {
+            println!("[UPDATE_ASSIGMENT] STEP 2 ❌ PARSE ERROR: {}", e);
+            return "FAIL:Invalid session format".to_string();
+        }
+    };
+    println!("[UPDATE_ASSIGMENT] STEP 2   now = {}, ends_at = {}", now, ends_at);
+    if now >= ends_at {
+        println!("[UPDATE_ASSIGMENT] STEP 2 ❌ session expired");
+        return "FAIL:Session expired".to_string();
+    }
+    println!("[UPDATE_ASSIGMENT] STEP 2 ✅ session not expired");
+
+    // ── 3) MUST BE A TEACHER ─────────────────────────────────────────
+    println!("[UPDATE_ASSIGMENT] STEP 3 ── verifying teacher");
+    let _teacher: Teacher = match db()
+        .teachers()
+        .find_one(doc! { "id": &session.user })
+        .await
+    {
+        Ok(Some(t)) => {
+            println!("[UPDATE_ASSIGMENT] STEP 3 ✅ teacher = {:?}", t.name);
+            t
+        }
+        Ok(None) => {
+            println!("[UPDATE_ASSIGMENT] STEP 3 ❌ not a teacher");
+            return "FAIL:Only teachers can create assignments".to_string();
+        }
+        Err(e) => {
+            println!("[UPDATE_ASSIGMENT] STEP 3 ❌ DB ERROR: {}", e);
+            return "FAIL:Database error".to_string();
+        }
+    };
+
+    // ── 4) VALIDATE ──────────────────────────────────────────────────
+    println!("[UPDATE_ASSIGMENT] STEP 4 ── validating payload");
+    if body.json.len() > 10_000_000 {
+        println!("[UPDATE_ASSIGMENT] STEP 4 ❌ json too large ({} bytes)", body.json.len());
+        return "FAIL:Payload too large (max 10 MB)".to_string();
+    }
+    if body.label.trim().is_empty() {
+        println!("[UPDATE_ASSIGMENT] STEP 4 ❌ empty label");
+        return "FAIL:Label is required".to_string();
+    }
+    if body.assigment_type.trim().is_empty() {
+        println!("[UPDATE_ASSIGMENT] STEP 4 ❌ empty assignment type");
+        return "FAIL:Assignment type is required".to_string();
+    }
+    if body.max_attempts == 0 {
+        println!("[UPDATE_ASSIGMENT] STEP 4 ❌ max_attempts == 0");
+        return "FAIL:Max attempts must be at least 1".to_string();
+    }
+    println!("[UPDATE_ASSIGMENT] STEP 4 ✅ payload valid");
+
+    // // ── 5) V0: ONLY ONE ASSIGNMENT PER TEACHER ───────────────────────
+    // println!("[UPDATE_ASSIGMENT] STEP 5 ── collecting old bonds");
+    // let mut old_bonds: Vec<String> = Vec::new();
+
+    // match db()
+    //     .raw_assigments()
+    //     .find(doc! { "teacher": &session.user })
+    //     .await
+    // {
+    //     Ok(mut cursor) => {
+    //         while cursor.advance().await.unwrap_or(false) {
+    //             if let Ok(a) = cursor.deserialize_current() {
+    //                 println!(
+    //                     "[UPDATE_ASSIGMENT] STEP 5   found old assignment id={:?} bond={:?}",
+    //                     a.id, a.bond
+    //                 );
+    //                 if !a.bond.is_empty() {
+    //                     old_bonds.push(a.bond);
+    //                 }
+    //             }
+    //         }
+    //     }
+    //     Err(e) => {
+    //         println!("[UPDATE_ASSIGMENT] STEP 5 ❌ BOND LOOKUP ERROR: {}", e);
+    //         return "FAIL:Database error".to_string();
+    //     }
+    // }
+    // println!(
+    //     "[UPDATE_ASSIGMENT] STEP 5   collected {} old bond(s): {:?}",
+    //     old_bonds.len(), old_bonds
+    // );
+
+    // for bond in &old_bonds {
+    //     println!("[UPDATE_ASSIGMENT] STEP 5   purging files for bond = {:?}", bond);
+
+    //     match db()
+    //         .files()
+    //         .find(doc! { "bonded": bond })
+    //         .await
+    //     {
+    //         Ok(mut cursor) => {
+    //             let mut file_count = 0;
+    //             while cursor.advance().await.unwrap_or(false) {
+    //                 if let Ok(f) = cursor.deserialize_current() {
+    //                     file_count += 1;
+    //                     let ext = std::path::Path::new(&f.name)
+    //                         .extension()
+    //                         .and_then(|e| e.to_str())
+    //                         .map(|e| format!(".{}", e))
+    //                         .unwrap_or_default();
+    //                     let stored_name = format!("{}{}", f.id, ext);
+    //                     let path = std::path::PathBuf::from(UPLOAD_DIR).join(&stored_name);
+
+    //                     println!(
+    //                         "[UPDATE_ASSIGMENT] STEP 5   → file id={:?} name={:?} stored={:?}",
+    //                         f.id, f.name, stored_name
+    //                     );
+
+    //                     match tokio::fs::remove_file(&path).await {
+    //                         Ok(_) => println!(
+    //                             "[UPDATE_ASSIGMENT] STEP 5     ✅ removed disk file {:?}",
+    //                             path
+    //                         ),
+    //                         Err(e) => println!(
+    //                             "[UPDATE_ASSIGMENT] STEP 5     ⚠ disk remove warn ({}): {}",
+    //                             stored_name, e
+    //                         ),
+    //                     }
+    //                 }
+    //             }
+    //             println!(
+    //                 "[UPDATE_ASSIGMENT] STEP 5   found {} file(s) for bond {:?}",
+    //                 file_count, bond
+    //             );
+    //         }
+    //         Err(e) => {
+    //             println!(
+    //                 "[UPDATE_ASSIGMENT] STEP 5   ⚠ file lookup error for bond {:?}: {}",
+    //                 bond, e
+    //             );
+    //         }
+    //     }
+
+    //     match db().files().delete_many(doc! { "bonded": bond }).await {
+    //         Ok(res) => println!(
+    //             "[UPDATE_ASSIGMENT] STEP 5   ✅ deleted {} file doc(s) for bond {:?}",
+    //             res.deleted_count, bond
+    //         ),
+    //         Err(e) => println!(
+    //             "[UPDATE_ASSIGMENT] STEP 5   ⚠ file doc delete error for bond {:?}: {}",
+    //             bond, e
+    //         ),
+    //     }
+    // }
+
+    println!("[UPDATE_ASSIGMENT] STEP 5 ── wiping old assignments");
+    match db()
+        .raw_assigments()
+        .delete_many(doc! { "teacher": &session.user })
+        .await
+    {
+        Ok(res) => println!(
+            "[UPDATE_ASSIGMENT] STEP 5 ✅ deleted {} old assignment doc(s)",
+            res.deleted_count
+        ),
+        Err(e) => {
+            println!("[UPDATE_ASSIGMENT] STEP 5 ❌ WIPE ERROR: {}", e);
+            return "FAIL:Database error".to_string();
+        }
+    }
+
+    // ── 6) WRITE THE RAW ASSIGNMENT ──────────────────────────────────
+    println!("[UPDATE_ASSIGMENT] STEP 6 ── inserting new assignment");
+    let id = CryptoService::random_string(32);
+    let now_str = now.to_rfc3339();
+
+    println!(
+        "[UPDATE_ASSIGMENT] STEP 6   new id = {:?}, bond = {:?}",
+        id, body.bond
+    );
+
+    let doc = RawAssigment {
+        id: id.clone(),
+        json: body.json,
+        max_attempts: body.max_attempts,
+        label: body.label,
+        assigment_type: body.assigment_type,
+        teacher: session.user.clone(),
+        created_date: now_str.clone(),
+        updated_date: now_str,
+        bond: body.bond,
+    };
+
+    match db().raw_assigments().insert_one(&doc).await {
+        Ok(_) => {
+            println!(
+                "[UPDATE_ASSIGMENT] STEP 6 ✅ insert OK ── DONE ────────────"
+            );
+            println!("════════════════════════════════════════════════════════════");
+            "OK:Assigment updated sucessfully!!!".to_string()
+        }
+        Err(e) => {
+            println!("[UPDATE_ASSIGMENT] STEP 6 ❌ INSERT ERROR: {}", e);
+            println!("════════════════════════════════════════════════════════════");
+            "FAIL:Database error".to_string()
+        }
+    }
+}
+
+/// Mask the middle of a token for safe logging (keeps first/last 4).
+fn mask(token: &str) -> String {
+    if token.len() <= 8 {
+        return "*".repeat(token.len());
+    }
+    format!(
+        "{}…{}",
+        &token[..4],
+        &token[token.len() - 4..]
+    )
+}
+## ending of file ./update_assigment.rs ##
+
+## file number: 21
+## starting ./update_groups.rs ##
+use crate::components::dbfactory::db;
+use crate::components::encrypt::CryptoService;
+use crate::identity::identities::{Assignment, Session, Teacher, UpdateGroupRequest, UserInfo};
+use axum::Json;
+use mongodb::bson::doc;
+
+pub async fn update_groups(Json(requests): Json<Vec<UpdateGroupRequest>>) -> String {
+    // ── Validate the batch is consistent BEFORE any DB work ─────────────
+    // Empty request is allowed: it means "delete every group for this teacher".
+    // But an empty request carries no token, so we can't authenticate it.
+    // → require the client to always include a token, even for the empty case.
+    // Solution: reject empty bodies at the client, and accept an empty list only
+    // when it's accompanied by a token. For now, guard it here:
+    if requests.is_empty() {
+        return "FAIL:Empty request (no token)".to_string();
+    }
+
+    let token = requests[0].token.clone();
+
+    for req in &requests {
+        if req.token != token {
+            return "FAIL:Inconsistent token in batch".to_string();
+        }
+        if req.size.parse::<u32>().is_err() {
+            return format!("FAIL:Invalid size for group {}", req.name);
+        }
+    }
+
+    // 1) Session exists?
+    let session: Session = match db()
+        .sessions()
+        .find_one(doc! { "token": &token })
+        .await
+    {
+        Ok(Some(s)) => s,
+        Ok(None) => return "FAIL:Invalid session".to_string(),
+        Err(e) => {
+            println!("UPDATE GROUPS SESSION ERROR: {}", e);
+            return "FAIL:Database error".to_string();
+        }
+    };
+
+    // 2) Session not expired?
+    let now = chrono::Utc::now();
+    let ends_at = match chrono::DateTime::parse_from_rfc3339(&session.ends_at) {
+        Ok(dt) => dt.with_timezone(&chrono::Utc),
+        Err(e) => {
+            println!("UPDATE GROUPS PARSE ERROR: {}", e);
+            return "FAIL:Invalid session format".to_string();
+        }
+    };
+    if now >= ends_at {
+        return "FAIL:Session expired".to_string();
+    }
+
+    // 3) Teacher exists — derived from session.user.
+    let teacher: Teacher = match db()
+        .teachers()
+        .find_one(doc! { "id": &session.user })
+        .await
+    {
+        Ok(Some(t)) => t,
+        Ok(None) => return "FAIL:Teacher not found".to_string(),
+        Err(e) => {
+            println!("UPDATE GROUPS TEACHER ERROR: {}", e);
+            return "FAIL:Database error".to_string();
+        }
+    };
+
+    // ── Wipe every student for this teacher ────────────────────────────
+    let mut deleted = 0usize;
+    match db()
+        .users()
+        .delete_many(doc! { "teacher": &teacher.id })
+        .await
+    {
+        Ok(res) => deleted += res.deleted_count as usize,
+        Err(e) => {
+            println!("UPDATE GROUPS WIPE ERROR: {}", e);
+            return "FAIL:Database error".to_string();
+        }
+    }
+
+    // ── Re-create from the request ─────────────────────────────────────
+    let mut created = 0usize;
+    let mut failed = 0usize;
+
+    for req in &requests {
+        let target: u32 = req.size.parse().unwrap_or(0);
+
+        for n in 1..=target {
+            let code = format!("{}{}", req.name, n);
+            let password = CryptoService::random_string(4).to_uppercase();
+
+            let user = UserInfo {
+                id: CryptoService::random_string(32),
+                code,
+                group: req.name.clone(),
+                teacher: teacher.id.clone(),
+                password,
+                assignments: Vec::<Assignment>::new(),
+            };
+
+            match db().users().insert_one(&user).await {
+                Ok(_) => created += 1,
+                Err(e) => {
+                    println!("UPDATE GROUPS INSERT ERROR ({}): {}", user.code, e);
+                    failed += 1;
+                }
+            }
+        }
+    }
+
+    format!(
+        "OK:created={},deleted={},failed={}",
+        created, deleted, failed
+    )
+}
+## ending of file ./update_groups.rs ##
+
+## file number: 22
+## starting ./upload_card.rs ##
+// use axum::Json;
+// use chacha20poly1305::consts::U64;
+// use mongodb::bson::doc;
+// use crate::identity::{PaymentMethod, Wallet};
+// use crate::utils::{random_uuid,get_dr_time};
+
+// // use crate::config::load_config;
+
+// use crate::{components::{dbfactory::{Mongo, db}, encrypt::CryptoService}, identity::{User,UserClient}};
+// // use crate::components::dbfactory::Sqlitedb;
+
+// pub async fn add_payment_method(
+//     Json(payment_method): Json<PaymentMethod>,
+// ) -> String {
+//     println!("[APM] Starting add_payment_method");
+
+//     // Only cards for now.
+//     let user_id = match &payment_method {
+//         PaymentMethod::Card {
+//             id,
+//             name_on_card,
+//             card_number,
+//             card_type,
+//             ..
+//         } => {
+//             println!(
+//                 "[APM] Card received | User ID: {} | Cardholder: {} | Brand: {} | Last Four: {}",
+//                 id, name_on_card, card_type, card_number
+//             );
+//             id
+//         }
+//         _ => {
+//             println!("[APM] Unsupported payment method");
+//             return "FAIL:Método de pago no soportado".to_string();
+//         }
+//     };
+
+//     println!("[APM] Connecting to database");
+//     let db = db();
+
+//     println!("[APM] Looking for wallet with ID: {}", user_id);
+
+//     // Find the user's wallet.
+//     let mut wallet = match db.wallets().find_one(doc! { "id": user_id }).await {
+//         Ok(Some(wallet)) => {
+//             println!("[APM] Wallet found");
+//             wallet
+//         }
+//         Ok(None) => {
+//             println!("[APM] Wallet not found");
+//             return "FAIL:No se encontró la billetera".to_string();
+//         }
+//         Err(err) => {
+//             println!("[APM] Database error while finding wallet: {:?}", err);
+//             return "FAIL:No se encontró la billetera".to_string();
+//         }
+//     };
+
+//     println!("[APM] Checking for duplicate cards in user's wallet");
+
+//     // Check only this user's wallet for duplicate cards.
+//     for method in &wallet.payment_methods {
+//         if let (
+//             PaymentMethod::Card { card_number: existing, .. },
+//             PaymentMethod::Card { card_number: incoming, .. },
+//         ) = (method, &payment_method)
+//         {
+//             println!(
+//                 "[APM] Comparing cards | Existing: {} | Incoming: {}",
+//                 existing, incoming
+//             );
+
+//             if existing == incoming {
+//                 println!("[APM] Duplicate card found in user's wallet");
+//                 return "FAIL:La tarjeta ya existe".to_string();
+//             }
+//         }
+//     }
+
+//     println!("[APM] Adding payment method to wallet");
+//     wallet.payment_methods.push(payment_method);
+
+//     println!("[APM] Saving updated wallet");
+
+//     if let Err(err) = db
+//         .wallets()
+//         .replace_one(doc! { "id": &wallet.id }, &wallet)
+//         .await
+//     {
+//         println!("[APM] FAIL to save wallet: {:?}", err);
+//         return "FAIL:No se pudo guardar la billetera".to_string();
+//     }
+
+//     println!("[APM] Payment method added successfully");
+
+//     "OK".to_string()
+// }   
+## ending of file ./upload_card.rs ##
+
+## file number: 23
+## starting ./upload_file.rs ##
+use axum::{
+    extract::Multipart,
+    response::IntoResponse,
+};
+use mongodb::bson::doc;
+use std::path::PathBuf;
+use tokio::fs::File;
+use tokio::io::AsyncWriteExt;
+
+use crate::components::dbfactory::db;
+use crate::components::encrypt::CryptoService;
+use crate::identity::identities::{FileInfo, Session, Teacher};
+
+const MAX_UPLOAD: usize = 1024 * 1024 * 1024 * 2; // 2 GB
+const UPLOAD_DIR: &str = "./uploads";
+const RESOURCE_BASE: &str = "http://localhost/testme-api/resource";
+const RESOURCE_BASE_PRODUCTION: &str = "https://klbsoft.work/testme-api/resource";
+
+const TEACHER_DAILY_UPLOAD_LIMIT: i64 = 100;
+const STUDENT_DAILY_UPLOAD_LIMIT: i64 = 50;
+
+pub async fn upload_file(mut multipart: Multipart) -> impl IntoResponse {
+    println!("════════════════════════════════════════════════════════════");
+    println!("[UPLOAD] ── INCOMING REQUEST ──────────────────────────────");
+
+    // ── 1) READ "token" FIELD FIRST ───────────────────────────────────
+    println!("[UPLOAD] STEP 1 ── reading `token` field");
+    let token = match multipart.next_field().await {
+        Ok(Some(field)) if field.name() == Some("token") => {
+            match field.text().await {
+                Ok(t) if !t.is_empty() => {
+                    println!("[UPLOAD] STEP 1 ✅ token = {:?}", mask(&t));
+                    t
+                }
+                Ok(_) => {
+                    println!("[UPLOAD] STEP 1 ❌ empty token");
+                    return "FAIL:Empty token".to_string();
+                }
+                Err(e) => {
+                    println!("[UPLOAD] STEP 1 ❌ token read error: {}", e);
+                    return format!("FAIL:token read:{}", e);
+                }
+            }
+        }
+        Ok(Some(field)) => {
+            println!(
+                "[UPLOAD] STEP 1 ❌ expected `token` first, got {:?}",
+                field.name()
+            );
+            return format!(
+                "FAIL:Expected token field first, got {:?}",
+                field.name()
+            );
+        }
+        Ok(None) => {
+            println!("[UPLOAD] STEP 1 ❌ no fields in request");
+            return "FAIL:No fields in request".to_string();
+        }
+        Err(e) => {
+            println!("[UPLOAD] STEP 1 ❌ multipart error: {}", e);
+            return format!("FAIL:multipart:{}", e);
+        }
+    };
+
+    // ── 2) READ "bond" FIELD SECOND ───────────────────────────────────
+    println!("[UPLOAD] STEP 2 ── reading `bond` field");
+    let bond = match multipart.next_field().await {
+        Ok(Some(field)) if field.name() == Some("bond") => {
+            match field.text().await {
+                Ok(b) if !b.is_empty() => {
+                    println!("[UPLOAD] STEP 2 ✅ bond = {:?}", b);
+                    b
+                }
+                Ok(_) => {
+                    println!("[UPLOAD] STEP 2 ❌ empty bond");
+                    return "FAIL:Empty bond".to_string();
+                }
+                Err(e) => {
+                    println!("[UPLOAD] STEP 2 ❌ bond read error: {}", e);
+                    return format!("FAIL:bond read:{}", e);
+                }
+            }
+        }
+        Ok(Some(field)) => {
+            println!(
+                "[UPLOAD] STEP 2 ❌ expected `bond` second, got {:?}",
+                field.name()
+            );
+            return format!(
+                "FAIL:Expected bond field second, got {:?}",
+                field.name()
+            );
+        }
+        Ok(None) => {
+            println!("[UPLOAD] STEP 2 ❌ missing bond field");
+            return "FAIL:Missing bond field".to_string();
+        }
+        Err(e) => {
+            println!("[UPLOAD] STEP 2 ❌ multipart error: {}", e);
+            return format!("FAIL:multipart:{}", e);
+        }
+    };
+
+    // ── 3) SESSION EXISTS ─────────────────────────────────────────────
+    println!("[UPLOAD] STEP 3 ── looking up session");
+    let session: Session = match db()
+        .sessions()
+        .find_one(doc! { "token": &token })
+        .await
+    {
+        Ok(Some(s)) => {
+            println!(
+                "[UPLOAD] STEP 3 ✅ session found (id = {:?}, user = {:?})",
+                s.id, s.user
+            );
+            s
+        }
+        Ok(None) => {
+            println!("[UPLOAD] STEP 3 ❌ no session for that token");
+            return "FAIL:Invalid session".to_string();
+        }
+        Err(e) => {
+            println!("[UPLOAD] STEP 3 ❌ DB error: {}", e);
+            return "FAIL:Database error".to_string();
+        }
+    };
+
+    // ── 4) SESSION NOT EXPIRED ────────────────────────────────────────
+    println!("[UPLOAD] STEP 4 ── checking session expiry");
+    let now = chrono::Utc::now();
+    let ends_at = match chrono::DateTime::parse_from_rfc3339(&session.ends_at) {
+        Ok(dt) => dt.with_timezone(&chrono::Utc),
+        Err(e) => {
+            println!("[UPLOAD] STEP 4 ❌ parse error: {}", e);
+            return "FAIL:Invalid session format".to_string();
+        }
+    };
+    println!("[UPLOAD] STEP 4   now = {}, ends_at = {}", now, ends_at);
+    if now >= ends_at {
+        println!("[UPLOAD] STEP 4 ❌ session expired");
+        return "FAIL:Session expired".to_string();
+    }
+    println!("[UPLOAD] STEP 4 ✅ session not expired");
+
+    // ── 5) AUTHORIZE THE SESSION ──────────────────────────────────────
+    // Rules:
+    //   a) session.user is a real teacher → allowed (any file, quota applies)
+    //   b) session.id traces back to an existing AssigmentAttempt → allowed
+    //      (student mid-attempt: session.id was set to the attempt_id at
+    //      session creation in `start_attempt`)
+    //   c) anything else → reject
+    println!(
+        "[UPLOAD] STEP 5 ── authorizing session (id = {:?}, user = {:?})",
+        session.id, session.user
+    );
+
+    let is_teacher = matches!(
+        db().teachers().find_one(doc! { "id": &session.user }).await,
+        Ok(Some(_))
+    );
+
+    let is_attempt = if is_teacher {
+        false
+    } else {
+        matches!(
+            db().attempts().find_one(doc! { "id": &session.id }).await,
+            Ok(Some(_))
+        )
+    };
+
+    if !is_teacher && !is_attempt {
+        println!(
+            "[UPLOAD] STEP 5 ❌ session is neither a teacher nor tied to an attempt (id = {:?}, user = {:?})",
+            session.id, session.user
+        );
+        return "FAIL:Not authorized to upload".to_string();
+    }
+
+    println!(
+        "[UPLOAD] STEP 5 ✅ authorized (teacher = {}, attempt = {})",
+        is_teacher, is_attempt
+    );
+
+    // ── 6) DAILY QUOTA CHECK (skip for attempt) ───────────────────────
+    if is_attempt {
+        println!("[UPLOAD] STEP 6 ── skipping daily quota for attempt session");
+    } else {
+        println!("[UPLOAD] STEP 6 ── checking daily quota for user = {:?}", session.user);
+        if let Err(msg) = check_daily_quota(&session.user, &now).await {
+            println!("[UPLOAD] STEP 6 ❌ quota blocked: {}", msg);
+            return msg;
+        }
+        println!("[UPLOAD] STEP 6 ✅ quota OK");
+    }
+
+    // ── 7) ENSURE UPLOAD DIR EXISTS ───────────────────────────────────
+    println!("[UPLOAD] STEP 7 ── ensuring upload dir exists");
+    let upload_dir = PathBuf::from(UPLOAD_DIR);
+    if let Err(e) = tokio::fs::create_dir_all(&upload_dir).await {
+        println!("[UPLOAD] STEP 7 ❌ mkdir error: {}", e);
+        return format!("FAIL:mkdir:{}", e);
+    }
+    println!("[UPLOAD] STEP 7 ✅ upload dir ready");
+
+    // ── 8) STREAM THE FILE FIELD ──────────────────────────────────────
+    println!("[UPLOAD] STEP 8 ── streaming file field");
+    while let Some(mut field) = match multipart.next_field().await {
+        Ok(f) => f,
+        Err(e) => {
+            println!("[UPLOAD] STEP 8 ❌ multipart error: {}", e);
+            return format!("FAIL:multipart:{}", e);
+        }
+    } {
+        let original_name = match field.file_name() {
+            Some(n) if !n.is_empty() => sanitize_filename::sanitize(n),
+            _ => {
+                println!(
+                    "[UPLOAD] STEP 8   skipping non-file field {:?}",
+                    field.name()
+                );
+                continue;
+            }
+        };
+
+        let ext = std::path::Path::new(&original_name)
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| format!(".{}", e))
+            .unwrap_or_default();
+
+        let id = CryptoService::random_string(32);
+        let stored_name = format!("{}{}", id, ext);
+        let path = upload_dir.join(&stored_name);
+
+        println!(
+            "[UPLOAD] STEP 8   original = {:?}, stored = {:?}",
+            original_name, stored_name
+        );
+
+        let mut file = match File::create(&path).await {
+            Ok(f) => {
+                println!("[UPLOAD] STEP 8   ✅ file created on disk");
+                f
+            }
+            Err(e) => {
+                println!("[UPLOAD] STEP 8   ❌ create error: {}", e);
+                return format!("FAIL:create:{}", e);
+            }
+        };
+
+        let mut written: usize = 0;
+
+        while let Some(chunk) = match field.chunk().await {
+            Ok(c) => c,
+            Err(e) => {
+                println!("[UPLOAD] STEP 8   ❌ read error after {} bytes: {}", written, e);
+                let _ = tokio::fs::remove_file(&path).await;
+                return format!("FAIL:read:{}", e);
+            }
+        } {
+            written += chunk.len();
+            if written > MAX_UPLOAD {
+                println!(
+                    "[UPLOAD] STEP 8   ❌ exceeded 2 GB limit at {} bytes",
+                    written
+                );
+                let _ = tokio::fs::remove_file(&path).await;
+                return "FAIL:File exceeds 2 GB limit".to_string();
+            }
+            if let Err(e) = file.write_all(&chunk).await {
+                println!("[UPLOAD] STEP 8   ❌ write error after {} bytes: {}", written, e);
+                let _ = tokio::fs::remove_file(&path).await;
+                return format!("FAIL:write:{}", e);
+            }
+        }
+
+        if let Err(e) = file.flush().await {
+            println!("[UPLOAD] STEP 8   ❌ flush error: {}", e);
+            let _ = tokio::fs::remove_file(&path).await;
+            return format!("FAIL:flush:{}", e);
+        }
+
+        println!("[UPLOAD] STEP 8   ✅ wrote {} bytes to disk", written);
+
+        // ── 9) REGISTER IN THE DB (WITH BOND) ────────────────────────
+        println!("[UPLOAD] STEP 9 ── registering file in DB");
+        let info = FileInfo {
+            id: id.clone(),
+            name: original_name.clone(),
+            bonded: bond.clone(),
+            uploaded_by: session.user.clone(),
+            uploaded_date: now.to_rfc3339(),
+        };
+
+        println!(
+            "[UPLOAD] STEP 9   FileInfo {{ id: {:?}, name: {:?}, bonded: {:?}, uploaded_by: {:?} }}",
+            info.id, info.name, info.bonded, info.uploaded_by
+        );
+
+        if let Err(e) = db().files().insert_one(&info).await {
+            println!("[UPLOAD] STEP 9   ❌ insert error: {}", e);
+            let _ = tokio::fs::remove_file(&path).await;
+            return "FAIL:Database error".to_string();
+        }
+        println!("[UPLOAD] STEP 9   ✅ file doc inserted");
+
+        // ── 10) RETURN THE RESOURCE URL ───────────────────────────────
+        let url = format!("OK:{}/{}", RESOURCE_BASE, stored_name);
+        println!("[UPLOAD] STEP 10 ✅ ── DONE ── returning {}", url);
+        println!("════════════════════════════════════════════════════════════");
+        return url;
+    }
+
+    println!("[UPLOAD] ❌ no file field found in request");
+    println!("════════════════════════════════════════════════════════════");
+    "FAIL:No file in request".to_string()
+}
+
+async fn check_daily_quota(user: &str, now: &chrono::DateTime<chrono::Utc>) -> Result<(), String> {
+    println!("[QUOTA] checking daily quota for user = {:?}", user);
+
+    let last = match db()
+        .files()
+        .find_one(doc! { "uploaded_by": user })
+        .sort(doc! { "uploaded_date": -1 })
+        .await
+    {
+        Ok(Some(f)) => {
+            println!(
+                "[QUOTA] found last upload = {:?} at {:?}",
+                f.name, f.uploaded_date
+            );
+            Some(f)
+        }
+        Ok(None) => {
+            println!("[QUOTA] no previous uploads for this user");
+            None
+        }
+        Err(e) => {
+            println!("[QUOTA] ❌ find error: {}", e);
+            return Err("FAIL:Database error".to_string());
+        }
+    };
+
+    let start_of_today = now.date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc();
+    println!("[QUOTA] start_of_today = {}", start_of_today);
+
+    if let Some(ref last_file) = last {
+        if let Ok(last_time) = chrono::DateTime::parse_from_rfc3339(&last_file.uploaded_date) {
+            if last_time.with_timezone(&chrono::Utc) < start_of_today {
+                println!("[QUOTA] last upload was before today → quota reset, allow");
+                return Ok(());
+            }
+        }
+    } else {
+        println!("[QUOTA] no history → allow");
+        return Ok(());
+    }
+
+    let start_str = start_of_today.to_rfc3339();
+    let count = match db()
+        .files()
+        .count_documents(doc! {
+            "uploaded_by": user,
+            "uploaded_date": { "$gte": &start_str },
+        })
+        .await
+    {
+        Ok(c) => {
+            println!("[QUOTA] uploads today = {}", c);
+            c
+        }
+        Err(e) => {
+            println!("[QUOTA] ❌ count error: {}", e);
+            return Err("FAIL:Database error".to_string());
+        }
+    };
+
+    let is_teacher = db()
+        .teachers()
+        .find_one(doc! { "id": user })
+        .await
+        .ok()
+        .flatten()
+        .is_some();
+
+    let limit = if is_teacher {
+        println!("[QUOTA] user is a teacher → limit = {}", TEACHER_DAILY_UPLOAD_LIMIT);
+        TEACHER_DAILY_UPLOAD_LIMIT
+    } else {
+        println!("[QUOTA] student limit = {}", STUDENT_DAILY_UPLOAD_LIMIT);
+        STUDENT_DAILY_UPLOAD_LIMIT
+    };
+
+    if count as i64 >= limit {
+        println!("[QUOTA] ❌ limit reached ({}/{})", count, limit);
+        return Err(format!(
+            "FAIL:Daily upload limit reached ({}/{})",
+            count, limit
+        ));
+    }
+
+    println!("[QUOTA] ✅ under limit ({}/{})", count, limit);
+    Ok(())
+}
+
+/// Mask the middle of a token for safe logging (keeps first/last 4).
+fn mask(token: &str) -> String {
+    if token.len() <= 8 {
+        return "*".repeat(token.len());
+    }
+    format!("{}…{}", &token[..4], &token[token.len() - 4..])
+}
+## ending of file ./upload_file.rs ##
+
+## file number: 24
+## starting ./upload.rs ##
+// use axum::{
+//     extract::Multipart,
+//     http::StatusCode,
+//     response::IntoResponse,
+//     Json,
+// };
+// use serde::{Deserialize, Serialize};
+// use std::path::{Path, PathBuf};
+// use tokio::fs;
+
+// use crate::components::dbfactory::db;
+
+// #[derive(Debug, Serialize, Deserialize)]
+// pub struct UploadResponse {
+//     pub status: String,
+//     pub message: String,
+// }
+
+// /*
+// curl -v -X POST http://0.0.0.0:3299/upload \
+//   -F "user_id=user_dba3e96c7edd4baa" \
+//   -F "file=@OPTIVIA.pdf;type=application/pdf"
+// */
+// pub async fn upload(mut multipart: Multipart) -> impl IntoResponse {
+//     println!("========== UPLOAD START ==========");
+
+//     let upload_dir = "files";
+//     let mut user_id = String::new();
+//     let mut file_saved = false;
+
+//     println!("UPLOAD: Ensuring upload directory exists...");
+
+//     if let Err(err) = fs::create_dir_all(upload_dir).await {
+//         println!("UPLOAD: FAIL to create directory: {:?}", err);
+
+//         return (
+//             StatusCode::INTERNAL_SERVER_ERROR,
+//             Json(UploadResponse {
+//                 status: "FAIL:Error del servidor".to_string(),
+//                 message: "No se pudo crear el directorio.".to_string(),
+//             }),
+//         )
+//             .into_response();
+//     }
+
+//     println!("UPLOAD: Directory ready");
+
+//     while let Ok(Some(field)) = multipart.next_field().await {
+//         let field_name = field.name().unwrap_or("").to_string();
+
+//         println!("UPLOAD: Processing field '{}'", field_name);
+
+//         match field_name.as_str() {
+//             "user_id" => {
+//                 println!("UPLOAD: Reading user_id...");
+
+//                 user_id = match field.text().await {
+//                     Ok(text) => text.trim().to_string(),
+//                     Err(err) => {
+//                         println!("UPLOAD: FAIL reading user_id: {:?}", err);
+
+//                         return (
+//                             StatusCode::BAD_REQUEST,
+//                             Json(UploadResponse {
+//                                 status: "FAIL:ID inválido".to_string(),
+//                                 message: "El user_id proporcionado no es válido.".to_string(),
+//                             }),
+//                         )
+//                             .into_response();
+//                     }
+//                 };
+
+//                 println!("UPLOAD: user_id = {}", user_id);
+
+//                 match db()
+//                     .users()
+//                     .find_one(mongodb::bson::doc! { "id": &user_id })
+//                     .await
+//                 {
+//                     Ok(Some(user)) => {
+//                         println!(
+//                             "UPLOAD: User verified: {} {}",
+//                             user.name, user.last_name
+//                         );
+//                     }
+
+//                     Ok(None) => {
+//                         println!("UPLOAD: User not found");
+
+//                         return (
+//                             StatusCode::NOT_FOUND,
+//                             Json(UploadResponse {
+//                                 status: "FAIL:Usuario no encontrado".to_string(),
+//                                 message: "El usuario no existe.".to_string(),
+//                             }),
+//                         )
+//                             .into_response();
+//                     }
+
+//                     Err(err) => {
+//                         println!("UPLOAD: Database error: {:?}", err);
+
+//                         return (
+//                             StatusCode::INTERNAL_SERVER_ERROR,
+//                             Json(UploadResponse {
+//                                 status: "FAIL:Error de base de datos".to_string(),
+//                                 message: "Error consultando la base de datos.".to_string(),
+//                             }),
+//                         )
+//                             .into_response();
+//                     }
+//                 }
+//             }
+
+//             "file" => {
+//                 if user_id.is_empty() {
+//                     println!("UPLOAD: File received before user_id");
+
+//                     return (
+//                         StatusCode::BAD_REQUEST,
+//                         Json(UploadResponse {
+//                             status: "FAIL:Orden incorrecto".to_string(),
+//                             message: "Debe enviar primero el user_id.".to_string(),
+//                         }),
+//                     )
+//                         .into_response();
+//                 }
+
+//                 // FIX: Own the filename before consuming `field`.
+//                 let original_name = field
+//                     .file_name()
+//                     .unwrap_or("file.bin")
+//                     .to_string();
+
+//                 println!("UPLOAD: Original filename: {}", original_name);
+
+//                 let data = match field.bytes().await {
+//                     Ok(bytes) => bytes,
+//                     Err(err) => {
+//                         println!("UPLOAD: FAIL reading file: {:?}", err);
+
+//                         return (
+//                             StatusCode::INTERNAL_SERVER_ERROR,
+//                             Json(UploadResponse {
+//                                 status: "FAIL:Error de lectura".to_string(),
+//                                 message: "No se pudo leer el archivo.".to_string(),
+//                             }),
+//                         )
+//                             .into_response();
+//                     }
+//                 };
+
+//                 println!("UPLOAD: File size: {} bytes", data.len());
+
+//                 let extension = Path::new(&original_name)
+//                     .extension()
+//                     .and_then(|e| e.to_str())
+//                     .unwrap_or("bin");
+
+//                 let filename = format!("{}.{}", user_id, extension);
+//                 let filepath = PathBuf::from(upload_dir).join(filename);
+
+//                 println!("UPLOAD: Saving to {:?}", filepath);
+
+//                 if let Err(err) = fs::write(&filepath, &data).await {
+//                     println!("UPLOAD: FAIL saving file: {:?}", err);
+
+//                     return (
+//                         StatusCode::INTERNAL_SERVER_ERROR,
+//                         Json(UploadResponse {
+//                             status: "FAIL:Error al guardar".to_string(),
+//                             message: "No se pudo guardar el archivo.".to_string(),
+//                         }),
+//                     )
+//                         .into_response();
+//                 }
+
+//                 println!("UPLOAD: File saved successfully");
+
+//                 file_saved = true;
+//             }
+
+//             _ => {
+//                 println!("UPLOAD: Ignoring unknown field '{}'", field_name);
+//             }
+//         }
+//     }
+
+//     if file_saved == false {
+//         println!("UPLOAD: No file uploaded");
+
+//         return (
+//             StatusCode::BAD_REQUEST,
+//             Json(UploadResponse {
+//                 status: "FAIL:Sin archivo".to_string(),
+//                 message: "No se proporcionó ningún archivo.".to_string(),
+//             }),
+//         )
+//             .into_response();
+//     }
+
+//     println!("UPLOAD: Success");
+//     println!("=========== UPLOAD END ===========");
+
+//     (
+//         StatusCode::OK,
+//         Json(UploadResponse {
+//             status: "OK:Archivo subido".to_string(),
+//             message: "El archivo se subió correctamente.".to_string(),
+//         }),
+//     )
+//         .into_response()
+// }
+## ending of file ./upload.rs ##
+

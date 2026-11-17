@@ -4,12 +4,15 @@ import { useState, useEffect, useRef } from "react";
 import { commonStyles, defaultSetting } from "../../components/theme/default";
 import { useAssignmentState, useIsDialog, useUpdateAssignment } from "../../context/AssignmentStateContext";
 import { SpeakingPhase, type SpeakingAssignment, type SpeakingUnit } from "../../session/UserSession";
-import { cancelRecording, finishRecording, startRecording } from "./media/scripts";
+import useBeep, { cancelRecording, finishRecording, startRecording } from "./media/scripts";
 
 
 export default function ActionBtn() {
     const [waveHeights, setWaveHeights] = useState<number[]>([10, 20, 15, 30, 25, 35, 20, 15, 25, 30, 15, 20]);
     const { unitIndex, session, timer_current, is_recording, answer_state, label_message } = useAssignmentState();
+    const {beep} = useBeep();
+   
+  
     // const [answer_state,setAswerState] = useState(0); 
     // const [dialog_state,setDialogState] = useState(0); 
     // const [button_label,setButtonLabel] = useState("Look at the image carefully...");//useState("Start Assigment");
@@ -20,8 +23,8 @@ export default function ActionBtn() {
     // const isDialog = useIsDialog(); 
     // const [completed,setCompleted] = useState(false); 
     const [buffer, setBuffer] = useState(null);
-    const ANALIZE_TIMER = defaultSetting.analize_picture_timer;
-    const ANWSWER_TIMER = defaultSetting.answer_picture_timer;
+    // const ANALIZE_TIMER = defaultSetting.analize_picture_timer;
+    // const ANWSWER_TIMER = defaultSetting.answer_picture_timer;
 
     useEffect(() => {
         if (buffer === null) return;
@@ -64,7 +67,7 @@ export default function ActionBtn() {
     // console.log(session);
     useEffect(() => {
         if (!is_recording) return;
-
+        beep();
         // 1️⃣ kick off the actual recorder
         startRecording().catch((err) => {
             console.error("[recorder] start failed:", err);
@@ -72,7 +75,13 @@ export default function ActionBtn() {
         });
 
         // 2️⃣ reset the timer state now that recording has begun
-        update({ timer_current: ANWSWER_TIMER, timer_started: ANWSWER_TIMER });
+        update((prev)=>{
+            const assigment = prev.session.assignment as SpeakingAssignment; 
+            const units = assigment.units as SpeakingUnit[]; 
+            const unit = units[prev.unitIndex]; 
+            const answer_timer = unit.speaking_time; 
+            return { timer_current: answer_timer, timer_started: answer_timer }
+        });
 
         // 3️⃣ wave animation (fast, visual only)
         const waveId = setInterval(() => {
@@ -105,11 +114,12 @@ export default function ActionBtn() {
                                 is_recording: false,
                                 unitIndex: prev.unitIndex + 1,
                                 answer_state: prev.answer_state + 1,
+                                message_note:""
                             }
                         });
 
                     clearInterval(timerId);
-                    return { timer_current: 0 };
+                    return { timer_current: 0 ,message_note: ""};
                 }
                 return { timer_current: prev.timer_current - 1 };
             });
@@ -172,10 +182,17 @@ export default function ActionBtn() {
         // setButtonColor(commonStyles.faded_purple);
         // setButtonLabel("In Progress...");
         // console.log({index:unitIndex,state:answer_state});
-        update({
-            timer_current: ANALIZE_TIMER,
-            timer_started: ANALIZE_TIMER,
-            label_message: "Look at the image carefully...",
+       
+        update((prev)=>{
+            const assigment = prev.session.assignment as SpeakingAssignment; 
+            const units = assigment.units as SpeakingUnit[]; 
+            const unit = units[prev.unitIndex]; 
+            const analize_timer = unit.thinking_time; 
+            return {
+                timer_current: analize_timer,
+                timer_started: analize_timer,
+                label_message: "Look at the image carefully...",
+            }
         });
 
         // const assigment = session.assignment as SpeakingAssignment;
@@ -192,7 +209,10 @@ export default function ActionBtn() {
                         clearInterval(timerRef.current);
                         timerRef.current = null;
                     }
-                    return { is_recording: true };
+                    return { 
+                        is_recording: true,
+                        message_note: " : SPEAK NOW!!!",
+                    };
                 }
 
                 return {};
@@ -293,6 +313,7 @@ export default function AudioFile() {
                         // const content = units[index].content; 
                           return {
                         unitIndex: index,
+                        isPlaying: false,
                         // audio_file: content,
                         // isPlaying: true,
                         // isTicking: false,
@@ -353,20 +374,21 @@ export default function AudioFile() {
 
     // ---- 3. whenever isPlaying changes, play / pause ----
 useEffect(() => {
-  const audio = audioRef.current;
-  if (!audio) return;
 
   const timeoutId = setTimeout(() => {
-    if (isPlaying) {
-      if (!audio.src) return;
-      audio.play().catch((err) => {
-        console.error('play failed', err);
-        update({ isPlaying: false });
-      });
-    } else {
-      audio.pause();
-    }
-  }, 250);
+        const audio = audioRef.current;
+        // console.log(audio.src);
+        if (!audio) return;
+            if (isPlaying) {
+            if (!audio.src) return;
+            audio.play().catch((err) => {
+                console.error('play failed', err);
+                update({ isPlaying: false });
+            });
+            } else {
+            audio.pause();
+            }
+        }, 500);
 
   return () => clearTimeout(timeoutId);
 }, [isPlaying, audio_file]);
@@ -563,7 +585,7 @@ import { defaultSetting } from "../../components/theme/default";
 import { useAssignmentState, useUpdateAssignment } from "../../context/AssignmentStateContext";
 import type { SpeakingAssignment, SpeakingUnit } from "../../session/UserSession";
 
-import { useFooter } from "../../context/FooterContext";
+// import { useFooter } from "../../context/FooterContext";
 import AudioFile from "./Audio";
  
 
@@ -575,7 +597,7 @@ export default function Avatar() {
     // const [audioFile, setAudio] = useState<string>(null); //`${defaultSetting.base_dialogs}test.mp3`;
     // const [isTicking, setTickState] = useState(false);
     // const [isListening, setListenState] = useState(false);
-    const LISTENING_TIMER = defaultSetting.think_about_listening;//20; 
+    // const LISTENING_TIMER = defaultSetting.think_about_listening;//20; 
     const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
     useEffect(()=>{
         const base = `${defaultSetting.base_bot}`;
@@ -613,10 +635,15 @@ export default function Avatar() {
         // setButtonColor(commonStyles.faded_purple);
         // setButtonLabel("In Progress...");
         // console.log({index:unitIndex,state:answer_state});
-        update({
-            timer_current: LISTENING_TIMER,
-            timer_started: LISTENING_TIMER,
-            label_message: "Wait for the timer to talk..."
+        update((prev)=>{
+            const assigment = prev.session.assignment as SpeakingAssignment; 
+            const units = assigment.units as SpeakingUnit[]; 
+            const unit = units[prev.unitIndex]; 
+                return {
+                timer_current: unit.thinking_time,
+                timer_started: unit.thinking_time,
+                label_message: "Wait for the timer to talk..."
+            }
         });
 
         // const assigment = session.assignment as SpeakingAssignment;
@@ -642,17 +669,21 @@ export default function Avatar() {
     },[isTicking]);
     
     useEffect(()=>{
-        if(unitIndex===0){
+        // if(unitIndex===0){
             update((prev)=>{
-                const assigment = prev.session.assignment as SpeakingAssignment;
-                const units = assigment.units as SpeakingUnit[];
-                const content = units[prev.unitIndex].content; 
-                return {
-                    audio_file: content,
-                    isPlaying: true,
+                if(prev.unitIndex === 0){
+                    const assigment = prev.session.assignment as SpeakingAssignment;
+                    const units = assigment.units as SpeakingUnit[];
+                    const content = units[prev.unitIndex].content; 
+                    return {
+                        audio_file: content,
+                        isPlaying: true,
+                        label_message: "Listen to the bot."
+                    }
                 }
+                return prev; 
             })
-        }
+        // }
             // update((prev)=>{
             //     if(prev.unitIndex === 0){
             //         return {unitIndex:6,answer_state:5};
@@ -665,20 +696,22 @@ export default function Avatar() {
     },[]);
 
     useEffect(()=>{
-        // console.log({unitIndex,answer_state})
-        if(unitIndex === 6 && answer_state === 5){
-            update((prev)=>{
-                // console.log(prev);
-                const assigment = prev.session.assignment as SpeakingAssignment;
-                const units = assigment.units as SpeakingUnit[];
-                const content = units[prev.unitIndex].content; 
-            return {
-                audio_file: content,
-                isPlaying: true, 
-                label_message: "Listen to the bot."
+        update((prev)=>{
+            if(prev.unitIndex === 6 && prev.answer_state === 5){
+                        // console.log(prev);
+                        const assigment = prev.session.assignment as SpeakingAssignment;
+                        const units = assigment.units as SpeakingUnit[];
+                        const content = units[prev.unitIndex].content; 
+                            
+                    return {
+                        audio_file: content,
+                        isPlaying: true, 
+                        label_message: "Listen to the bot."
+                    }
             }
-            })
-        }
+            return prev; 
+        })
+        
     },[unitIndex,answer_state])
 
     useEffect(()=>{
@@ -729,6 +762,7 @@ export default function Avatar() {
             <AudioFile/>
 
             <img
+                onDragStart={(e) => e.preventDefault()}
                 src={bot}
                 width={"140px"}
                 height={"140px"}
@@ -751,65 +785,311 @@ export default function Avatar() {
 ## ending of file ./Avatar.tsx ##
 
 ## file number: 4
-## starting ./Completed.tsx ##
-import { defaultSetting, commonStyles } from "../../components/theme/default";
+## starting ./CheatDetected.tsx ##
+// import { commonStyles, defaultSetting } from "./components/theme/default";
 
-export default function Completed() {
+import { commonStyles, defaultSetting } from "../../components/theme/default";
+
+ 
+
+type Props = {
+  reason?: string;
+};
+
+export default function CheatDetected({ reason }: Props) {
+  return (
+    <div
+      style={{
+        width: "100%",
+        height: "100%",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "20px",
+        boxSizing: "border-box",
+      }}
+    >
+      <div
+        style={{
+          backgroundColor: commonStyles.clear_purple,
+          borderRadius: "22px",
+          padding: "40px 60px",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          gap: "20px",
+          boxShadow: "0 4px 8px rgba(0, 0, 0, 0.2)",
+          border: `solid 2px ${commonStyles.white}`,
+          maxWidth: "500px",
+          width: "100%",
+        }}
+      >
+        <img
+          src={`${defaultSetting.base_bot}bot-sad.svg`}
+          width={"140px"}
+          height={"140px"}
+          alt="sad bot"
+        />
+        <h1
+          style={{
+            color: commonStyles.white,
+            fontSize: "24px",
+            fontWeight: "bold",
+            margin: 0,
+            textAlign: "center",
+          }}
+        >
+          Cheating detected
+        </h1>
+        <p
+          style={{
+            color: commonStyles.white,
+            fontSize: commonStyles.button_fontSize,
+            fontWeight: commonStyles.button_fontWeight,
+            margin: 0,
+            textAlign: "center",
+            lineHeight: "1.4",
+          }}
+        >
+          A cheating condition was met... the bot is sad because you're trying
+          to cheat.
+        </p>
+        {reason && (
+          <p
+            style={{
+              color: commonStyles.white,
+              fontSize: commonStyles.button_fontSize,
+              opacity: 0.7,
+              margin: 0,
+              textAlign: "center",
+            }}
+          >
+            Reason: {reason}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+## ending of file ./CheatDetected.tsx ##
+
+## file number: 5
+## starting ./CheatDetector.tsx ##
+import { useEffect, useState, type ReactNode } from "react";
+import CheatDetected from "./CheatDetected";
+
+type Props = {
+  children: ReactNode;
+  enabled?: boolean;
+  onCheatDetected?: (reason: string) => void;
+};
+
+export default function CheatDetector({ children, enabled = true, onCheatDetected }: Props) {
+  const [cheatReason, setCheatReason] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!enabled) return;   // don't attach listeners when disabled
+
+    const flag = (reason: string) => {
+      setCheatReason((prev) => prev ?? reason);
+      onCheatDetected?.(reason);
+    };
+
+    const handleBlur = () => flag("window-blur");
+    const handleFullscreenChange = () => {
+      if (!document.fullscreenElement) flag("exited-fullscreen");
+    };
+
+    window.addEventListener("blur", handleBlur);
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+
+    return () => {
+      window.removeEventListener("blur", handleBlur);
+      document.removeEventListener("fullscreenchange", handleFullscreenChange);
+    };
+  }, [enabled, onCheatDetected]);
+
+  if (cheatReason) {
     return (
-        <div style={{
-            width: "100%",
-            height: "100%",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: "20px",
-            boxSizing: "border-box",
-        }}>
-            <div style={{
-                backgroundColor: commonStyles.clear_purple,
-                borderRadius: "22px",
-                padding: "40px 60px",
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                gap: "20px",
-                boxShadow: "0 4px 8px rgba(0, 0, 0, 0.2)",
-                border: `solid 2px ${commonStyles.white}`,
-                maxWidth: "500px",
-                width: "100%",
-            }}>
-                <img
-                    src={`${defaultSetting.base_bot}bot-exited-static.svg`}
-                    width={"140px"}
-                    height={"140px"}
-                    alt="bot"
-                />
-                <h1 style={{
-                    color: commonStyles.white,
-                    fontSize: "24px",
-                    fontWeight: "bold",
-                    margin: 0,
-                    textAlign: "center",
-                }}>
-                    Congratulations!
-                </h1>
-                <p style={{
-                    color: commonStyles.white,
-                    fontSize: commonStyles.button_fontSize,
-                    fontWeight: commonStyles.button_fontWeight,
-                    margin: 0,
-                    textAlign: "center",
-                    lineHeight: "1.4",
-                }}>
-                    You have completed this assignment.
-                </p>
-            </div>
+      <>
+        <div style={{ display: "none" }}>{children}</div>
+        <div style={{ position: "fixed", inset: 0, zIndex: 9999, backgroundColor: "#fff", overflow: "auto" }}>
+          <CheatDetected reason={cheatReason} />
         </div>
+      </>
     );
+  }
+
+  return <>{children}</>;
+}
+## ending of file ./CheatDetector.tsx ##
+
+## file number: 6
+## starting ./Completed.tsx ##
+import { useEffect, useState } from "react";
+import { defaultSetting, commonStyles } from "../../components/theme/default";
+import { useAssignmentState } from "../../context/AssignmentStateContext";
+import { revokeAttemptBlobs, submitAttempt } from "../home/api";
+
+// Module-level promise — survives React StrictMode's mount → unmount → remount.
+// Both mounts share the same in-flight submit; only one network call happens.
+let sharedSubmit: Promise<string> | null = null;
+
+export default function Completed({
+  setter,
+}: {
+  setter: React.Dispatch<React.SetStateAction<boolean>>;
+}) {
+  const { session } = useAssignmentState();
+  const [done, setDone] = useState(false);
+
+  useEffect(() => {
+    if (!session) return;
+
+    if (!sharedSubmit) {
+      sharedSubmit = submitAttempt(session).then((text) => {
+        console.log("submit:", text);
+        revokeAttemptBlobs(session);
+        return text;
+      });
+    }
+
+    let cancelled = false;
+    sharedSubmit.then(() => {
+      if (!cancelled) setDone(true);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!done) return;
+    const id = setTimeout(() => {
+      sharedSubmit = null;   // reset for the next attempt
+      setter(false);
+    }, 10000);
+    return () => clearTimeout(id);
+  }, [done, setter]);
+
+  return (
+    <div
+      style={{
+        width: "100%",
+        height: "100%",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "20px",
+        boxSizing: "border-box",
+      }}
+    >
+      <div
+        style={{
+          backgroundColor: commonStyles.clear_purple,
+          borderRadius: "22px",
+          padding: "40px 60px",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          gap: "20px",
+          boxShadow: "0 4px 8px rgba(0, 0, 0, 0.2)",
+          border: `solid 2px ${commonStyles.white}`,
+          maxWidth: "500px",
+          width: "100%",
+        }}
+      >
+        {!done ? (
+          <>
+            <Spinner />
+            <h1
+              style={{
+                color: commonStyles.white,
+                fontSize: "24px",
+                fontWeight: "bold",
+                margin: 0,
+                textAlign: "center",
+              }}
+            >
+              Saving your answers…
+            </h1>
+            <p
+              style={{
+                color: commonStyles.white,
+                fontSize: commonStyles.button_fontSize,
+                fontWeight: commonStyles.text_font_weight,
+                margin: 0,
+                textAlign: "center",
+                lineHeight: "1.4",
+              }}
+            >
+              Please wait while we finish submitting your assignment.
+            </p>
+          </>
+        ) : (
+          <>
+            <img
+              src={`${defaultSetting.base_bot}bot-exited-static.svg`}
+              width={"140px"}
+              height={"140px"}
+              alt="bot"
+            />
+            <h1
+              style={{
+                color: commonStyles.white,
+                fontSize: "24px",
+                fontWeight: "bold",
+                margin: 0,
+                textAlign: "center",
+              }}
+            >
+              Congratulations!
+            </h1>
+            <p
+              style={{
+                color: commonStyles.white,
+                fontSize: commonStyles.button_fontSize,
+                fontWeight: commonStyles.text_font_weight,
+                margin: 0,
+                textAlign: "center",
+                lineHeight: "1.4",
+              }}
+            >
+              You have completed this assignment.
+            </p>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Spinner ───────────────────────────────────────────────────────────
+function Spinner() {
+  return (
+    <>
+      <style>{`
+        @keyframes testme-spinner {
+          to { transform: rotate(360deg); }
+        }
+      `}</style>
+      <div
+        style={{
+          width: "72px",
+          height: "72px",
+          borderRadius: "50%",
+          border: `6px solid ${commonStyles.faded_purple}`,
+          borderTopColor: commonStyles.white,
+          animation: "testme-spinner 0.9s linear infinite",
+        }}
+      />
+    </>
+  );
 }
 ## ending of file ./Completed.tsx ##
 
-## file number: 5
+## file number: 7
 ## starting ./Describe.tsx ##
 import { useState, useEffect } from "react";
 import "../../animation.css"
@@ -821,16 +1101,19 @@ import { SpeakingPhase } from "../../session/UserSession";
 import { commonStyles } from "../../components/theme/default";
 import { useAssignmentState,useUpdateAssignment } from "../../context/AssignmentStateContext";
 import Completed from "./Completed";
+import CheatDetector from "./CheatDetector";
 
-export default function DescribeTheImage(){
-    const {completed} = useAssignmentState(); 
+export default function DescribeTheImage({setter}:{setter:React.Dispatch<React.SetStateAction<boolean>>}){
+  const { completed } = useAssignmentState(); 
+  const [cheated,setCheatState] = useState(false);
   return (
-   <>
-    {
-      (completed===true)?<Completed/>:<Inner/>
-    }
-   </>
-  )
+    <CheatDetector enabled={!completed} onCheatDetected={() => {
+      setCheatState(true); 
+    }}>
+      { completed ===  true ? <Completed setter={setter}/> : 
+      (cheated===false?<Inner />:null) }
+    </CheatDetector>  
+  );
 }
 
 function Inner() {
@@ -1002,7 +1285,7 @@ function Inner() {
 }
 ## ending of file ./Describe.tsx ##
 
-## file number: 6
+## file number: 8
 ## starting ./Image.tsx ##
 import { defaultSetting, commonStyles } from "../../components/theme/default";
 import { useState, useEffect } from "react";
@@ -1014,6 +1297,7 @@ import type { SpeakingAssignment } from "../../session/UserSession";
 
 export default function Image(){
     const {session,unitIndex} = useAssignmentState(); 
+    const isDialog = useIsDialog(); 
     // const isDialog = useIsDialog(); 
     // Calculate max size based on viewport height
     // let maxImageSize = Math.min(
@@ -1023,7 +1307,7 @@ export default function Image(){
     const maxImageSize = 580;
     const assigment = session.assignment as SpeakingAssignment;
     const unit = assigment.units[unitIndex];
-    const is_a_test = unit.id==="dialog_a"||unit.id==="dialog_b" || unitIndex > 6; 
+    const is_a_test = isDialog || unitIndex > 6; 
     const imageUrl = is_a_test?`${defaultSetting.base_icons}x_listening.png`:unit.content;
   
     // console.log({index:unitIndex,content:unit.content});
@@ -1047,6 +1331,8 @@ export default function Image(){
                 alignItems: "center",
             }}>
                 <img 
+                    onContextMenu={(e) => e.preventDefault()}
+                    onDragStart={(e) => e.preventDefault()}
                     key={unitIndex}
                     src={imageUrl}
                     style={{
@@ -1071,7 +1357,7 @@ export default function Image(){
 }
 ## ending of file ./Image.tsx ##
 
-## file number: 7
+## file number: 9
 ## starting ./Message.tsx ##
 import { useState, useEffect, useRef } from "react";
 import { commonStyles } from "../../components/theme/default";
@@ -1079,6 +1365,7 @@ import { useAssignmentState, useIsDialog } from "../../context/AssignmentStateCo
 import {
     AssignmentType,
     SpeakingPhase,
+    type SpeakingAssignment,
     type SpeakingUnit,
 } from "../../session/UserSession";
 
@@ -1103,11 +1390,12 @@ function normalizeSentence(input?: string | string[]): string[] {
 }
 
 export default function Message() {
-    const { message_note,session, unitIndex, timeElapsed, maxTimePerAnswer ,timer_current,timer_started} = useAssignmentState();
+    const {is_recording, isPlaying,message_note,session, unitIndex, timeElapsed, maxTimePerAnswer ,timer_current,timer_started} = useAssignmentState();
     const { width: windowWidth, height: windowHeight } = useWindowSize();
 
     const [showScrollIndicator, setShowScrollIndicator] = useState(false);
     const isDialog = useIsDialog();
+ 
     const contentRef = useRef<HTMLDivElement>(null);
 
     // --- narrow assignment/unit safely ---
@@ -1117,10 +1405,14 @@ export default function Message() {
         ? assignment.units[unitIndex] ?? null
         : null;
 
+    // const _type = unit?.id.substring(0,unit?.id.indexOf('_'));
+
+    // const isDialog = _type === "dialog"
+
     // --- derive content flags ---
-    const isTestUnit = unit?.id === "dialog_a" || unit?.id === "dialog_b";
+    // const isTestUnit =  _type === "dialog";
     const isDescribe = unit?.phase === SpeakingPhase.describe_image;
-    const showHelpful = isTestUnit || isDescribe;
+    const showHelpful = isDialog || isDescribe;
     const lines = showHelpful ? normalizeSentence(unit?.helpful_sentence) : [];
 
     // --- layout ---
@@ -1132,8 +1424,8 @@ export default function Message() {
     // timer ring
 const remaining = Math.max(0, timer_current);
 const ringPercent = 100 - Math.floor((remaining / timer_started) * 100) ;
- 
 
+ 
 // console.log({remain:remaining,porcent:ringPercent})
     // --- scroll indicator ---
     useEffect(() => {
@@ -1159,7 +1451,7 @@ const ringPercent = 100 - Math.floor((remaining / timer_started) * 100) ;
     // if (!showHelpful || lines.length === 0) {
     //     return null;
     // }
-
+    // console.log({isPlaying,isDialog})
     return (
         <div
             className="page-transition"
@@ -1214,7 +1506,8 @@ const ringPercent = 100 - Math.floor((remaining / timer_started) * 100) ;
                         marginBottom: "5px",
                     }}
                 >
-                    {unitIndex > 6 || isDialog ? "Info" : "Helpful sentence"}
+                    
+                    {unitIndex > 6 || isDialog ? "Info" : `Helpful sentence${message_note}`} 
                     {unitIndex > 6 ?`${message_note}`:""}
                 </label>
                 {/* <div
@@ -1243,19 +1536,19 @@ const ringPercent = 100 - Math.floor((remaining / timer_started) * 100) ;
                         textAlign: "left",
                     }}
                 >
-                    {
-                        !isDialog && unitIndex < 6?(
+                    {!isDialog && unitIndex < 6 ? (
+                        is_recording ? (
                             <>
-                        <li>Today, I will be describing the...</li>
-                        <li>The first image that I see, shows an illustration of the ...</li>
-                        <li>Also, the photo depicts...</li>
-                        <li>Lastly, the photo shows...</li>
-                        <li>The Landscape is characterized by...</li>
+                            <li>Today, I will be describing the...</li>
+                            <li>The first image that I see, shows an illustration of the ...</li>
+                            <li>Also, the photo depicts...</li>
+                            <li>Lastly, the photo shows...</li>
+                            <li>The Landscape is characterized by...</li>
                             </>
-                        ):
-                        lines
-                        
-                    }
+                        ) : (<li>Carefully observe every detail of the image.</li>)
+                    ) : (
+                    lines
+                    )}
                     {
                         unitIndex > 6?(
                             <li>Speak as clear as you can after the audio...</li>
@@ -1280,14 +1573,14 @@ const ringPercent = 100 - Math.floor((remaining / timer_started) * 100) ;
             )}
 
             {/* timer ring */}
-            {!isDialog && (
+            {isDialog === false && isPlaying === false? (
                 <div
                  style={{
             width: "84px",
             height: "84px",
             borderRadius: "50%",
             background: `conic-gradient(${commonStyles.faded_purple} ${ringPercent}%, ${commonStyles.white} ${ringPercent}%)`,
-            display:"flex",
+             display:"flex",
             alignItems: "center",
             justifyContent: "center",
             flexShrink: 0,
@@ -1316,14 +1609,14 @@ const ringPercent = 100 - Math.floor((remaining / timer_started) * 100) ;
                         </span>
                     </div>
                 </div>
-            )}
+            ):null}
 
         </div>
     );
 }
 ## ending of file ./Message.tsx ##
 
-## file number: 8
+## file number: 10
 ## starting ./ProgressBar.tsx ##
 import { useState } from "react";
 import { commonStyles } from "../../components/theme/default";
@@ -1410,7 +1703,7 @@ export default function ProgressBar(){
 }
 ## ending of file ./ProgressBar.tsx ##
 
-## file number: 9
+## file number: 11
 ## starting ./tools.tsx ##
 import { useState, useEffect } from "react";
 

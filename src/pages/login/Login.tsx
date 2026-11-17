@@ -1,25 +1,116 @@
-import { useState } from "react";
-import { commonStyles, defaultSetting } from "../../components/theme/default";
-import { useAuth } from "../../context/AuthContext";
+// src/pages/login/Login.tsx
+
+import { useEffect, useRef, useState } from "react";
+import { commonStyles, defaultSetting, setToken } from "../../components/theme/default";
+import StudentDashboard from "../student/StudentDashboard";
+// import { startHeartbeat } from "./api";
+import Wall from "../wall/Wall";
+import type { UserLogin } from "../../session/UserSession";
+import Spinner from "./Spinner";
+
+function navigate(to: string) {
+  const BASE = "/testme";
+  const target = window.location.pathname.startsWith(BASE) ? `${BASE}${to}` : to;
+  window.history.pushState({}, "", target);
+  window.dispatchEvent(new PopStateEvent("popstate"));
+}
 
 function Login() {
-  const { login } = useAuth();
+  // ── site-availability gate ─────────────────────────────────────────
+  // `siteReady` is false until /site/check returns "TRUE" at least once.
+  // While false we poll every 10s. Once true we stop polling forever.
+  const [siteReady, setSiteReady] = useState(false);
+
   const [code, setCode] = useState("");
   const [password, setPassword] = useState("");
-  const [group, setGroup] = useState("");
   const [error, setError] = useState("");
+  const [result, setResult] = useState("");
+  const [credentials, setCredentials] = useState<UserLogin | null>(null);
 
+  // const stopHeartbeatRef = useRef<(() => void) | null>(null);
+
+  const PASSWORD_MAX_LENGTH = 4;
+  const CODE_MAX_LENGTH = 4;
+
+  // ── 1) POLL /site/check UNTIL IT RETURNS TRUE ──────────────────────
+  useEffect(() => {
+    if (siteReady) return; // already on — never poll again
+
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const check = async () => {
+      try {
+        const res = await fetch(`${defaultSetting.api_url}/site/check`, {
+          method: "GET",
+        });
+        const text = (await res.text()).trim();
+
+        if (cancelled) return;
+
+        if (text === "TRUE") {
+          setSiteReady(true); // stops the loop via the `if (siteReady) return`
+          return;
+        }
+
+        // Not on yet — schedule the next poll in 10s
+        timer = setTimeout(check, 60_000);
+      } catch {
+        if (cancelled) return;
+        // Network error: keep polling, don't surface it as a hard error
+        timer = setTimeout(check, 60_000);
+      }
+    };
+
+    check();
+
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [siteReady]);
+
+  // ── 2) LOGIN ──────────────────────────────────────────────────────
   const handleLogin = async () => {
-    if (!code || !password || !group) {
-      setError("All fields are required");
-      return;
-    }
+    setError("");
 
-    console.log("Login:", { code, password, group });
-    
-    // Mock login for now
-    login();
+    const data: UserLogin = { code, password };
+
+    try {
+      // If you have a real login endpoint, call it here and only proceed
+      // on success. For now, accept the credentials locally.
+      //
+      // const res = await fetch(`${defaultSetting.api_url}/login`, {
+      //   method: "POST",
+      //   headers: { "Content-Type": "application/json" },
+      //   body: JSON.stringify(data),
+      // });
+      // if (!res.ok) throw new Error("Invalid credentials");
+      // const body = await res.json();
+      // setToken(body.token);
+      // setResult(body.name ?? "");
+
+      setCredentials(data);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Login failed");
+    }
   };
+
+  // ── 3) HEARTBEAT LIFECYCLE ────────────────────────────────────────
+  // useEffect(() => {
+  //   if (!credentials) return;
+
+  //   // const token = credentials.code;
+  //   // stopHeartbeatRef.current = startHeartbeat(token, () => {
+  //     // setCredentials(null);
+  //   //   setError("Connection lost. Please log in again.");
+  //   // });
+
+  //   return () => {
+  //     // stopHeartbeatRef.current?.();
+  //     // stopHeartbeatRef.current = null;
+  //   };
+  // }, [credentials]);
 
   const inputStyle: React.CSSProperties = {
     borderRadius: "15px",
@@ -35,14 +126,17 @@ function Login() {
     textAlign: "center",
   };
 
-  const labelStyle: React.CSSProperties = {
-    fontSize: commonStyles.button_fontSize,
-    fontWeight: commonStyles.button_fontWeight,
-    color: commonStyles.white,
-    marginBottom: "6px",
-    opacity: 0.8,
-    textAlign: "center",
-  };
+  // ── RENDER ORDER (logical, in sequence) ───────────────────────────
+  // 1. Not yet logged in AND site is OFF  → spinner + "waiting for site"
+  // 2. Logged in                            → Wall
+  // 3. Site is ON, not logged in            → login form
+  if (!siteReady && credentials === null) {
+    return <Spinner/>;
+  }
+
+  if (credentials !== null) {
+    return <Wall credentials={credentials} />;
+  }
 
   return (
     <div
@@ -55,7 +149,6 @@ function Login() {
         justifyContent: "center",
       }}
     >
-      {/* Centered card */}
       <div
         style={{
           width: "40%",
@@ -70,7 +163,7 @@ function Login() {
           boxShadow: "0 4px 12px rgba(0, 0, 0, 0.2)",
         }}
       >
-        {/* Logo / App Name */}
+        {/* Logo */}
         <div
           style={{
             width: "100px",
@@ -104,7 +197,9 @@ function Login() {
             marginBottom: "20px",
           }}
         >
-          <label>Welcome to <strong>TestMe</strong></label>
+          <label>
+            Welcome to <strong>TestMe</strong>
+          </label>
         </p>
 
         <div
@@ -116,57 +211,36 @@ function Login() {
             alignItems: "center",
           }}
         >
-          <label style={{color:commonStyles.white}}>Please enter your information</label>
-          {/* Code */}
+          <label style={{ color: commonStyles.white }}>Please enter your information</label>
+
           <div style={{ width: "100%" }}>
-            {/* <div style={labelStyle}>Code</div> */}
             <input
               type="text"
-              maxLength={2}
+              maxLength={CODE_MAX_LENGTH}
               style={inputStyle}
               value={code}
               onChange={(e) => {
-                setCode(e.target.value);
+                setCode(e.target.value.toUpperCase());
                 setError("");
               }}
-              placeholder="Code"
+              placeholder="Student Code"
             />
           </div>
 
-          {/* Password */}
           <div style={{ width: "100%" }}>
-            {/* <div style={labelStyle}>Password</div> */}
             <input
               type="password"
-              maxLength={10}
+              maxLength={PASSWORD_MAX_LENGTH}
               style={inputStyle}
               value={password}
               onChange={(e) => {
-                setPassword(e.target.value);
+                setPassword(e.target.value.toUpperCase());
                 setError("");
               }}
               placeholder="Password"
             />
           </div>
 
-          {/* Group */}
-          {/* <div style={{ width: "100%" }}>
-            <select
-              style={inputStyle}
-              value={group}
-              onChange={(e) => {
-                setGroup(e.target.value);
-                setError("");
-              }}
-            >
-              <option value="">Group</option>
-              <option value="Group 1">Group 1</option>
-              <option value="Group 4">Group 4</option>
-              <option value="Group 7">Group 7</option>
-            </select>
-          </div> */}
-
-          {/* Error Message */}
           {error && (
             <p
               style={{
@@ -204,6 +278,25 @@ function Login() {
             Enter
           </button>
         )}
+
+        {/* Bottom link — switch to the other role */}
+        <button
+          onClick={() => navigate("/admin")}
+          style={{
+            background: "transparent",
+            border: "none",
+            color: commonStyles.white,
+            marginTop: "20px",
+            fontSize: commonStyles.button_fontSize,
+            fontWeight: commonStyles.button_fontWeight,
+            opacity: 0.8,
+            cursor: "pointer",
+            textDecoration: "underline",
+            padding: 0,
+          }}
+        >
+          I'm a teacher
+        </button>
       </div>
     </div>
   );

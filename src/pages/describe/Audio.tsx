@@ -27,6 +27,7 @@ export default function AudioFile() {
                         // const content = units[index].content; 
                           return {
                         unitIndex: index,
+                        isPlaying: false,
                         // audio_file: content,
                         // isPlaying: true,
                         // isTicking: false,

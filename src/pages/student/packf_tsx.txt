@@ -1,0 +1,1418 @@
+## file number: 1
+## starting ./AsigmentCard.tsx ##
+import { commonStyles } from "../../components/theme/default";
+import type { Assignment } from "../../session/UserSession";
+import { getStatus, STATUS_STYLE, TYPE_LABEL } from "./common";
+
+export default function AssignmentCard({
+  assignment,
+  selected,
+  onClick,
+}: {
+  assignment: Assignment;
+  selected: boolean;
+  onClick: () => void;
+}) {
+  const status = getStatus(assignment);
+  const style = STATUS_STYLE[status];
+
+  const made = (assignment as any).attemptsMade ?? 0;
+  const max = (assignment as any).attemptsMax ?? 0;
+  const graded = (assignment as any).grade ?? null;
+
+  return (
+    <div
+      onClick={onClick}
+      style={{
+        border: `2px solid ${selected ? commonStyles.purple : commonStyles.faded_purple}`,
+        borderRadius: "18px",
+        padding: "16px",
+        cursor: "pointer",
+        display: "flex",
+        flexDirection: "column",
+        gap: "10px",
+        backgroundColor: commonStyles.white,
+        transition:
+          "border-color 0.2s ease, transform 0.1s ease, box-shadow 0.2s ease",
+        boxShadow: selected
+          ? "0 4px 12px rgba(170, 59, 255, 0.25)"
+          : "0 2px 6px rgba(0, 0, 0, 0.05)",
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span
+          style={{
+            color: commonStyles.purple,
+            fontSize: "13px",
+            fontWeight: "bold",
+            textTransform: "uppercase",
+            letterSpacing: "0.5px",
+          }}
+        >
+          {TYPE_LABEL[assignment.type]}
+        </span>
+
+        <span
+          style={{
+            backgroundColor: style.bg,
+            color: commonStyles.white,
+            fontSize: "11px",
+            fontWeight: "bold",
+            borderRadius: "10px",
+            padding: "3px 9px",
+            textTransform: "uppercase",
+            letterSpacing: "0.4px",
+          }}
+        >
+          {style.label}
+        </span>
+      </div>
+
+      <span
+        style={{
+          color: commonStyles.purple,
+          fontSize: commonStyles.button_fontSize,
+          fontWeight: commonStyles.button_fontWeight,
+        }}
+      >
+        {assignment.label ?? assignment.id}
+      </span>
+
+      <span
+        style={{
+          color: commonStyles.purple,
+          fontSize: commonStyles.button_fontSize,
+          opacity: 0.75,
+        }}
+      >
+        {status === "completed"
+          ? graded
+            ? `Grade: ${graded}`
+            : "Awaiting grade"
+          : status === "missing"
+          ? "Missing"
+          : made > 0 && max > 0
+          ? `${made} / ${max} attempts`
+          : "Pending"}
+      </span>
+    </div>
+  );
+}
+## ending of file ./AsigmentCard.tsx ##
+
+## file number: 2
+## starting ./common.tsx ##
+import { commonStyles } from "../../components/theme/default";
+import { AssignmentType, type Assignment } from "../../session/UserSession";
+
+export type Status = "completed" | "pending" | "missing";
+
+/**
+ * `completed` = at least one attempt exists for this assignment.
+ * `pending`   = no attempt yet.
+ * `missing`   = reserved for future "past due" logic (not used yet).
+ */
+export function getStatus(a: Assignment): Status {
+  const made = (a as any).attemptsMade ?? 0;
+  if (made > 0) return "completed";
+  return "pending";
+}
+
+export const STATUS_STYLE: Record<Status, { bg: string; label: string }> = {
+  completed: { bg: commonStyles.purple, label: "Completed" },
+  pending: { bg: commonStyles.clear_purple, label: "Pending" },
+  missing: { bg: commonStyles.faded_purple, label: "Missing" },
+};
+
+export const TYPE_LABEL: Record<AssignmentType, string> = {
+  [AssignmentType.speaking]: "Speaking",
+  [AssignmentType.listening]: "Listening",
+  [AssignmentType.writing]: "Writing",
+};
+
+export function Grid({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))",
+        gap: "14px",
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+export function Empty({ text }: { text: string }) {
+  return (
+    <p
+      style={{
+        color: commonStyles.purple,
+        fontSize: commonStyles.button_fontSize,
+        fontWeight: commonStyles.button_fontWeight,
+        opacity: 0.6,
+        margin: 0,
+      }}
+    >
+      {text}
+    </p>
+  );
+}
+## ending of file ./common.tsx ##
+
+## file number: 3
+## starting ./_dashboard.tsx ##
+import { useMemo, useState } from "react";
+import { commonStyles, defaultSetting } from "../../components/theme/default";
+import {
+  AssignmentType,
+  type Assignment,
+  type SpeakingAssignment,
+  type ListeningAssignment,
+  type WritingAssignment,
+} from "../../session/UserSession";
+
+// ---------------------------------------------------------------------------
+// Mock data — replace with your real source (context, API, props, etc.)
+// ---------------------------------------------------------------------------
+const MOCK_ASSIGNMENTS: Assignment[] = [
+  {
+    id: "sp_001",
+    type: AssignmentType.speaking,
+    grade: "8.5",
+    units: [],
+  } as SpeakingAssignment,
+  {
+    id: "sp_002",
+    type: AssignmentType.speaking,
+    grade: null,
+    units: [],
+  } as SpeakingAssignment,
+  {
+    id: "ls_001",
+    type: AssignmentType.listening,
+    grade: "7.0",
+  } as ListeningAssignment,
+  {
+    id: "wr_001",
+    type: AssignmentType.writing,
+    grade: null,
+  } as WritingAssignment,
+];
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+type Status = "completed" | "pending" | "missing";
+
+function getStatus(a: Assignment): Status {
+  if (a.grade) return "completed";
+  // You can refine this: "missing" = past due, "pending" = still open
+  return "pending";
+}
+
+const STATUS_COLORS: Record<Status, string> = {
+  completed: "#2ecc71",
+  pending: commonStyles.purple,
+  missing: "#e74c3c",
+};
+
+const TYPE_LABEL: Record<AssignmentType, string> = {
+  [AssignmentType.speaking]: "Speaking",
+  [AssignmentType.listening]: "Listening",
+  [AssignmentType.writing]: "Writing",
+};
+
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
+export default function _Dashboard() {
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  const assignments = MOCK_ASSIGNMENTS; // swap for real data
+
+  const pending = useMemo(
+    () => assignments.filter((a) => getStatus(a) === "pending"),
+    [assignments]
+  );
+  const completed = useMemo(
+    () => assignments.filter((a) => getStatus(a) === "completed"),
+    [assignments]
+  );
+  const missing = useMemo(
+    () => assignments.filter((a) => getStatus(a) === "missing"),
+    [assignments]
+  );
+
+  const selected = assignments.find((a) => a.id === selectedId) ?? null;
+
+  return (
+    <div
+      className="page-transition"
+      style={{
+        width: "100%",
+        height: "100%",
+        display: "flex",
+        gap: "20px",
+        padding: "20px",
+        boxSizing: "border-box",
+        backgroundColor: commonStyles.white,
+      }}
+    >
+      {/* ---------------------------------------------------------------- */}
+      {/* LEFT: Assignments grid                                            */}
+      {/* ---------------------------------------------------------------- */}
+      <div
+        style={{
+          flex: 2,
+          display: "flex",
+          flexDirection: "column",
+          gap: "20px",
+          overflowY: "auto",
+          minWidth: 0,
+        }}
+      >
+        <h1
+          style={{
+            color: commonStyles.purple,
+            fontSize: "24px",
+            fontWeight: "bold",
+            margin: 0,
+          }}
+        >
+          My Assignments
+        </h1>
+
+        {/* Pending */}
+        <Section title="Pending" count={pending.length}>
+          {pending.length === 0 ? (
+            <Empty text="No pending assignments 🎉" />
+          ) : (
+            <Grid>
+              {pending.map((a) => (
+                <AssignmentCard
+                  key={a.id}
+                  assignment={a}
+                  selected={a.id === selectedId}
+                  onClick={() => setSelectedId(a.id)}
+                />
+              ))}
+            </Grid>
+          )}
+        </Section>
+
+        {/* Completed */}
+        <Section title="Completed" count={completed.length}>
+          {completed.length === 0 ? (
+            <Empty text="Nothing completed yet." />
+          ) : (
+            <Grid>
+              {completed.map((a) => (
+                <AssignmentCard
+                  key={a.id}
+                  assignment={a}
+                  selected={a.id === selectedId}
+                  onClick={() => setSelectedId(a.id)}
+                />
+              ))}
+            </Grid>
+          )}
+        </Section>
+
+        {/* Missing */}
+        {missing.length > 0 && (
+          <Section title="Missing" count={missing.length}>
+            <Grid>
+              {missing.map((a) => (
+                <AssignmentCard
+                  key={a.id}
+                  assignment={a}
+                  selected={a.id === selectedId}
+                  onClick={() => setSelectedId(a.id)}
+                />
+              ))}
+            </Grid>
+          </Section>
+        )}
+      </div>
+
+      {/* ---------------------------------------------------------------- */}
+      {/* RIGHT: History / grades side panel                                */}
+      {/* ---------------------------------------------------------------- */}
+      <div
+        style={{
+          flex: 1,
+          minWidth: "260px",
+          maxWidth: "360px",
+          backgroundColor: commonStyles.purple,
+          borderRadius: "25px",
+          padding: "20px",
+          display: "flex",
+          flexDirection: "column",
+          gap: "15px",
+          boxSizing: "border-box",
+          overflowY: "auto",
+        }}
+      >
+        {/* Bot logo */}
+        <div
+          style={{
+            width: "70px",
+            height: "70px",
+            borderRadius: "50%",
+            backgroundColor: commonStyles.white,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            alignSelf: "center",
+          }}
+        >
+          <img
+            src={`${defaultSetting.base_bot}bot.svg`}
+            alt="bot"
+            style={{ width: "60px", height: "60px", objectFit: "contain" }}
+          />
+        </div>
+
+        <h2
+          style={{
+            color: commonStyles.white,
+            fontSize: "18px",
+            fontWeight: "bold",
+            margin: 0,
+            textAlign: "center",
+          }}
+        >
+          {selected ? "Assignment Detail" : "Grade History"}
+        </h2>
+
+        {selected ? (
+          <DetailCard assignment={selected} onClose={() => setSelectedId(null)} />
+        ) : (
+          <HistoryList
+            completed={completed}
+            missing={missing}
+            onSelect={setSelectedId}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Small building blocks
+// ---------------------------------------------------------------------------
+function Section({
+  title,
+  count,
+  children,
+}: {
+  title: string;
+  count: number;
+  children: React.ReactNode;
+}) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "8px",
+          color: commonStyles.purple,
+        }}
+      >
+        <strong style={{ fontSize: "16px" }}>{title}</strong>
+        <span
+          style={{
+            backgroundColor: commonStyles.faded_purple,
+            borderRadius: "10px",
+            padding: "2px 8px",
+            fontSize: "12px",
+            fontWeight: "bold",
+            color: commonStyles.purple,
+          }}
+        >
+          {count}
+        </span>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function Grid({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))",
+        gap: "12px",
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function Empty({ text }: { text: string }) {
+  return (
+    <p
+      style={{
+        color: commonStyles.purple,
+        fontSize: commonStyles.button_fontSize,
+        opacity: 0.6,
+        margin: 0,
+      }}
+    >
+      {text}
+    </p>
+  );
+}
+
+function AssignmentCard({
+  assignment,
+  selected,
+  onClick,
+}: {
+  assignment: Assignment;
+  selected: boolean;
+  onClick: () => void;
+}) {
+  const status = getStatus(assignment);
+  return (
+    <div
+      onClick={onClick}
+      style={{
+        border: `2px solid ${
+          selected ? STATUS_COLORS[status] : commonStyles.faded_purple
+        }`,
+        borderRadius: "15px",
+        padding: "12px",
+        cursor: "pointer",
+        display: "flex",
+        flexDirection: "column",
+        gap: "8px",
+        backgroundColor: commonStyles.white,
+        transition: "border-color 0.2s, transform 0.1s",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+        }}
+      >
+        <span
+          style={{
+            color: commonStyles.purple,
+            fontSize: "13px",
+            fontWeight: "bold",
+            textTransform: "uppercase",
+          }}
+        >
+          {TYPE_LABEL[assignment.type]}
+        </span>
+        <span
+          style={{
+            width: "8px",
+            height: "8px",
+            borderRadius: "50%",
+            backgroundColor: STATUS_COLORS[status],
+          }}
+        />
+      </div>
+
+      <span
+        style={{
+          color: commonStyles.purple,
+          fontSize: commonStyles.button_fontSize,
+          fontWeight: commonStyles.button_fontWeight,
+        }}
+      >
+        {assignment.id}
+      </span>
+
+      <span
+        style={{
+          color: commonStyles.purple,
+          fontSize: "12px",
+          opacity: 0.7,
+        }}
+      >
+        {status === "completed" ? `Grade: ${assignment.grade}` : status === "missing" ? "Missing" : "Pending"}
+      </span>
+    </div>
+  );
+}
+
+function DetailCard({
+  assignment,
+  onClose,
+}: {
+  assignment: Assignment;
+  onClose: () => void;
+}) {
+  const status = getStatus(assignment);
+  return (
+    <div
+      style={{
+        backgroundColor: commonStyles.white,
+        borderRadius: "15px",
+        padding: "15px",
+        display: "flex",
+        flexDirection: "column",
+        gap: "10px",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+        }}
+      >
+        <strong style={{ color: commonStyles.purple }}>
+          {TYPE_LABEL[assignment.type]} — {assignment.id}
+        </strong>
+        <button
+          onClick={onClose}
+          style={{
+            background: "none",
+            border: "none",
+            cursor: "pointer",
+            color: commonStyles.purple,
+            fontSize: "18px",
+            lineHeight: 1,
+          }}
+        >
+          ×
+        </button>
+      </div>
+
+      <Row label="Status" value={status} color={STATUS_COLORS[status]} />
+      <Row label="Grade" value={assignment.grade ?? "—"} />
+      <Row label="Type" value={TYPE_LABEL[assignment.type]} />
+    </div>
+  );
+}
+
+function Row({
+  label,
+  value,
+  color,
+}: {
+  label: string;
+  value: string;
+  color?: string;
+}) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between" }}>
+      <span style={{ color: commonStyles.purple, opacity: 0.7, fontSize: "13px" }}>
+        {label}
+      </span>
+      <span
+        style={{
+          color: color ?? commonStyles.purple,
+          fontWeight: "bold",
+          fontSize: "13px",
+        }}
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function HistoryList({
+  completed,
+  missing,
+  onSelect,
+}: {
+  completed: Assignment[];
+  missing: Assignment[];
+  onSelect: (id: string) => void;
+}) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+      <HistoryGroup
+        title="Grades"
+        items={completed}
+        empty="No grades yet."
+        onSelect={onSelect}
+      />
+      <HistoryGroup
+        title="Missing"
+        items={missing}
+        empty="Nothing missing 👏"
+        onSelect={onSelect}
+      />
+    </div>
+  );
+}
+
+function HistoryGroup({
+  title,
+  items,
+  empty,
+  onSelect,
+}: {
+  title: string;
+  items: Assignment[];
+  empty: string;
+  onSelect: (id: string) => void;
+}) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+      <span
+        style={{
+          color: commonStyles.white,
+          fontSize: "13px",
+          fontWeight: "bold",
+          opacity: 0.8,
+          textTransform: "uppercase",
+        }}
+      >
+        {title}
+      </span>
+
+      {items.length === 0 ? (
+        <span
+          style={{
+            color: commonStyles.white,
+            fontSize: "12px",
+            opacity: 0.6,
+          }}
+        >
+          {empty}
+        </span>
+      ) : (
+        items.map((a) => (
+          <div
+            key={a.id}
+            onClick={() => onSelect(a.id)}
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              backgroundColor: commonStyles.white,
+              borderRadius: "10px",
+              padding: "8px 12px",
+              cursor: "pointer",
+            }}
+          >
+            <span
+              style={{
+                color: commonStyles.purple,
+                fontSize: "13px",
+                fontWeight: commonStyles.button_fontWeight,
+              }}
+            >
+              {TYPE_LABEL[a.type]} · {a.id}
+            </span>
+            <span
+              style={{
+                color: commonStyles.purple,
+                fontSize: "13px",
+                fontWeight: "bold",
+              }}
+            >
+              {a.grade ?? "—"}
+            </span>
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+## ending of file ./_dashboard.tsx ##
+
+## file number: 4
+## starting ./DetailCard.tsx ##
+import { commonStyles } from "../../components/theme/default";
+import type { Assignment } from "../../session/UserSession";
+import { getStatus, STATUS_STYLE, TYPE_LABEL } from "./common";
+import Row from "./Row";
+
+export default function DetailCard({
+  assignment,
+  onClose,
+  onStart,
+}: {
+  assignment: Assignment;
+  onClose: () => void;
+  onStart: () => void;
+}) {
+  const status = getStatus(assignment);
+  const style = STATUS_STYLE[status];
+
+  const made = (assignment as any).attemptsMade ?? 0;
+  const max = (assignment as any).attemptsMax ?? 0;
+  const grade = (assignment as any).grade ?? null;
+
+  const maxedOut = max > 0 && made >= max;
+  // can only enter when the student has not used up their attempts AND
+  // has not already completed (attempted) the assignment
+  const canEnter = !maxedOut && made === 0;
+
+  return (
+    <div
+      style={{
+        backgroundColor: commonStyles.white,
+        borderRadius: "18px",
+        padding: "18px",
+        display: "flex",
+        flexDirection: "column",
+        gap: "14px",
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span
+          style={{
+            color: commonStyles.purple,
+            fontSize: commonStyles.button_fontSize,
+            fontWeight: "bold",
+          }}
+        >
+          {TYPE_LABEL[assignment.type]} · {assignment.label ?? assignment.id}
+        </span>
+        <button
+          onClick={onClose}
+          style={{
+            background: "none",
+            border: "none",
+            cursor: "pointer",
+            color: commonStyles.purple,
+            fontSize: "22px",
+            lineHeight: 1,
+            padding: 0,
+          }}
+        >
+          ×
+        </button>
+      </div>
+
+      <span
+        style={{
+          alignSelf: "flex-start",
+          backgroundColor: style.bg,
+          color: commonStyles.white,
+          fontSize: "12px",
+          fontWeight: "bold",
+          borderRadius: "10px",
+          padding: "3px 10px",
+          textTransform: "uppercase",
+        }}
+      >
+        {style.label}
+      </span>
+
+      <Row
+        label="Grade"
+        value={grade === "" || grade === null ? "—" : String(grade)}
+      />
+      <Row label="Type" value={TYPE_LABEL[assignment.type]} />
+      <Row label="Attempts" value={`${made} / ${max}`} />
+
+      <button
+        onClick={onStart}
+        disabled={!canEnter}
+        style={{
+          padding: "12px",
+          border: `2px solid ${commonStyles.purple}`,
+          borderRadius: "15px",
+          backgroundColor: canEnter
+            ? commonStyles.purple
+            : commonStyles.faded_purple,
+          color: commonStyles.white,
+          fontSize: commonStyles.button_fontSize,
+          fontWeight: commonStyles.button_fontWeight,
+          cursor: canEnter ? "pointer" : "not-allowed",
+        }}
+      >
+        {maxedOut
+          ? "Attempts exhausted"
+          : made > 0
+          ? "Already attempted"
+          : "Enter"}
+      </button>
+    </div>
+  );
+}
+## ending of file ./DetailCard.tsx ##
+
+## file number: 5
+## starting ./HistoryGroup.tsx ##
+import { commonStyles } from "../../components/theme/default";
+import type { Assignment } from "../../session/UserSession";
+import { TYPE_LABEL } from "./common";
+
+export default function HistoryGroup({
+  title,
+  items,
+  empty,
+  onSelect,
+}: {
+  title: string;
+  items: Assignment[];
+  empty: string;
+  onSelect: (id: string) => void;
+}) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+      <span
+        style={{
+          color: commonStyles.white,
+          fontSize: "13px",
+          fontWeight: "bold",
+          opacity: 0.85,
+          textTransform: "uppercase",
+          letterSpacing: "0.6px",
+        }}
+      >
+        {title}
+      </span>
+
+      {items.length === 0 ? (
+        <span
+          style={{
+            color: commonStyles.white,
+            fontSize: commonStyles.button_fontSize,
+            opacity: 0.55,
+          }}
+        >
+          {empty}
+        </span>
+      ) : (
+        items.map((a) => (
+          <div
+            key={a.id}
+            onClick={() => onSelect(a.id)}
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              backgroundColor: commonStyles.white,
+              borderRadius: "14px",
+              padding: "10px 14px",
+              cursor: "pointer",
+              transition: "transform 0.1s ease",
+            }}
+          >
+            <span
+              style={{
+                color: commonStyles.purple,
+                fontSize: commonStyles.button_fontSize,
+                fontWeight: commonStyles.button_fontWeight,
+              }}
+            >
+              {TYPE_LABEL[a.type]} · {a.id}
+            </span>
+            <span
+              style={{
+                color: commonStyles.purple,
+                fontSize: commonStyles.button_fontSize,
+                fontWeight: "bold",
+              }}
+            >
+              {a.grade ?? "—"}
+            </span>
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+## ending of file ./HistoryGroup.tsx ##
+
+## file number: 6
+## starting ./HistoryList.tsx ##
+import type { Assignment } from "../../session/UserSession";
+import HistoryGroup from "./HistoryGroup";
+
+export default function HistoryList({
+  completed,
+  missing,
+  onSelect,
+}: {
+  completed: Assignment[];
+  missing: Assignment[];
+  onSelect: (id: string) => void;
+}) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+      <HistoryGroup title="Grades" items={completed} empty="No grades yet." onSelect={onSelect} />
+      <HistoryGroup title="Missing" items={missing} empty="Nothing missing" onSelect={onSelect} />
+    </div>
+  );
+}
+
+## ending of file ./HistoryList.tsx ##
+
+## file number: 7
+## starting ./Row.tsx ##
+import { commonStyles } from "../../components/theme/default";
+
+export default function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+      <span
+        style={{
+          color: commonStyles.purple,
+          opacity: 0.7,
+          fontSize: commonStyles.button_fontSize,
+        }}
+      >
+        {label}
+      </span>
+      <span
+        style={{
+          color: commonStyles.purple,
+          fontWeight: "bold",
+          fontSize: commonStyles.button_fontSize,
+        }}
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
+
+
+## ending of file ./Row.tsx ##
+
+## file number: 8
+## starting ./Section.tsx ##
+// ---------------------------------------------------------------------------
+// Building blocks
+
+import { commonStyles } from "../../components/theme/default";
+
+// ---------------------------------------------------------------------------
+export default function Section({
+  title,
+  count,
+  accent,
+  children,
+}: {
+  title: string;
+  count: number;
+  accent: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+        <span
+          style={{
+            color: commonStyles.purple,
+            fontSize: commonStyles.button_fontSize,
+            fontWeight: "bold",
+          }}
+        >
+          {title}
+        </span>
+        <span
+          style={{
+            backgroundColor: accent,
+            borderRadius: "12px",
+            padding: "2px 10px",
+            fontSize: "13px",
+            fontWeight: "bold",
+            color: commonStyles.white,
+          }}
+        >
+          {count}
+        </span>
+      </div>
+      {children}
+    </div>
+  );
+}
+## ending of file ./Section.tsx ##
+
+## file number: 9
+## starting ./StudentDashboard.tsx ##
+import { useEffect, useMemo, useState } from "react";
+import {
+  commonStyles,
+  defaultSetting,
+  getToken,
+} from "../../components/theme/default";
+
+import { getStatus, Grid, Empty } from "./common";
+import DetailCard from "./DetailCard";
+import Section from "./Section";
+import AssignmentCard from "./AsigmentCard";
+import type {
+  AssignmentType,
+  SpeakingAssignment,
+} from "../../session/UserSession";
+import Home from "../home/Home";
+
+// ── server response shapes ──────────────────────────────────────────────
+
+type CurrentInfoResponse = {
+  label: string;
+  assigment_type: string;
+  grade: string;
+  // get_assigment_info currently returns these three. If you later add
+  // `attempts_made` / `attempts_max` server-side, drop them in here too.
+};
+
+type AttemptRowResponse = {
+  id: string;
+  user: string;
+  code: string;
+  group: string;
+  attempt: number;
+  max_attempts: number;
+  assigment_id: string;
+  assigment_label: string;
+  assigment_type: string;
+  grade: string;
+  window: number;
+  json: string;
+};
+
+// ── dashboard card model ───────────────────────────────────────────────
+// Extends SpeakingAssignment so the rest of the UI (getStatus, cards,
+// DetailCard) keeps working unchanged. The extra fields carry the
+// attempts information the two calls gave us.
+
+type DashAssignment = SpeakingAssignment & {
+  label: string;
+  attemptsMade: number;
+  attemptsMax: number;
+  grade: string | null;
+};
+
+export default function StudentDashboard() {
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [assignments, setAssignments] = useState<DashAssignment[]>([]);
+  const [inprogress, setInprogress] = useState(false);
+
+  useEffect(() => {
+    const token = getToken();
+    if (!token) return;
+
+    let cancelled = false;
+
+    (async () => {
+      // 1) current active assignment
+      let current: CurrentInfoResponse | null = null;
+      try {
+        const res = await fetch(
+          `${defaultSetting.api_url}/assigment/student/info`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ token }),
+          }
+        );
+        const text = await res.text();
+        if (text.startsWith("OK:")) {
+          current = JSON.parse(text.slice(3)) as CurrentInfoResponse;
+        }
+      } catch {
+        // ignore — treat as no current assignment
+      }
+
+      // 2) attempts history
+      let attempts: AttemptRowResponse[] = [];
+      try {
+        const res = await fetch(`${defaultSetting.api_url}/assigment/attempts`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token }),
+        });
+        const text = await res.text();
+        if (text.startsWith("OK:")) {
+          attempts = JSON.parse(text.slice(3)) as AttemptRowResponse[];
+        }
+      } catch {
+        // ignore — treat as no attempts
+      }
+
+      if (cancelled) return;
+
+      // 3) group attempts by assigment_id
+      const byAssignment = new Map<string, AttemptRowResponse[]>();
+      for (const a of attempts) {
+        const list = byAssignment.get(a.assigment_id) ?? [];
+        list.push(a);
+        byAssignment.set(a.assigment_id, list);
+      }
+
+      const rows: DashAssignment[] = [];
+
+      // 4) current assignment → a card if the student has NOT taken it
+      if (current) {
+        const matchingAttempts = byAssignment.get(
+          // get_assigment_info doesn't currently return the assignment id,
+          // so match by label + type (they're effectively unique per save).
+          // If you later expose `assigment_id` on /assigment/student/info,
+          // swap this to a direct id lookup.
+          ""
+        );
+
+        // Look for any attempt whose label/type matches the current one.
+        const currentAttempts =
+          attempts.filter(
+            (a) =>
+              a.assigment_label === current!.label &&
+              a.assigment_type === current!.assigment_type
+          ) ?? [];
+
+        const attemptsMade = currentAttempts.length;
+        const attemptsMax =
+          currentAttempts[0]?.max_attempts ?? 1;
+        const latestGrade =
+          currentAttempts
+            .map((a) => a.grade)
+            .filter((g) => g !== "")
+            .pop() ?? "";
+
+        rows.push({
+          id: current.label, // display id until you add a real assignment id
+          label: current.label,
+          type: current.assigment_type as AssignmentType,
+          grade: latestGrade === "" ? null : latestGrade,
+          units: [],
+          attemptsMade,
+          attemptsMax,
+        } as DashAssignment);
+      }
+
+      // 5) every assignment that has at least one attempt but is NOT the
+      //    current one → a completed card per assignment id
+      const currentAttemptIds = new Set(
+        attempts
+          .filter(
+            (a) =>
+              current &&
+              a.assigment_label === current.label &&
+              a.assigment_type === current.assigment_type
+          )
+          .map((a) => a.assigment_id)
+      );
+
+      for (const [assigmentId, list] of byAssignment.entries()) {
+        if (currentAttemptIds.has(assigmentId)) continue;
+
+        const first = list[0];
+        const made = list.length;
+        const max = first.max_attempts;
+        const graded = list
+          .map((a) => a.grade)
+          .filter((g) => g !== "")
+          .pop() ?? "";
+
+        rows.push({
+          id: assigmentId,
+          label: first.assigment_label,
+          type: first.assigment_type as AssignmentType,
+          grade: graded === "" ? null : graded,
+          units: [],
+          attemptsMade: made,
+          attemptsMax: max,
+        } as DashAssignment);
+      }
+
+      setAssignments(rows);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // exit fullscreen when attempt ends
+  useEffect(() => {
+    if (!inprogress && document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {});
+    }
+  }, [inprogress]);
+
+  const pending = useMemo(
+    () => assignments.filter((a) => getStatus(a) === "pending"),
+    [assignments]
+  );
+  const completed = useMemo(
+    () => assignments.filter((a) => getStatus(a) === "completed"),
+    [assignments]
+  );
+  const missing = useMemo(
+    () => assignments.filter((a) => getStatus(a) === "missing"),
+    [assignments]
+  );
+
+  const selected = assignments.find((a) => a.id === selectedId) ?? null;
+
+  if (inprogress) {
+    return <Home state={inprogress} setter={setInprogress} />;
+  }
+
+  return (
+    <div
+      className="page-transition"
+      style={{
+        width: "100%",
+        height: "100%",
+        display: "flex",
+        gap: "20px",
+        padding: "24px",
+        boxSizing: "border-box",
+        backgroundColor: commonStyles.white,
+      }}
+    >
+      {/* LEFT — assignments */}
+      <div
+        style={{
+          flex: 2,
+          display: "flex",
+          flexDirection: "column",
+          gap: "28px",
+          overflowY: "auto",
+          minWidth: 0,
+          paddingRight: "8px",
+        }}
+      >
+        <h1
+          style={{
+            color: commonStyles.purple,
+            fontSize: commonStyles.button_fontSize,
+            fontWeight: "bold",
+            margin: 0,
+          }}
+        >
+          My Assignments
+        </h1>
+
+        <Section title="Pending" count={pending.length} accent={commonStyles.clear_purple}>
+          {pending.length === 0 ? (
+            <Empty text="No pending assignments 🎉" />
+          ) : (
+            <Grid>
+              {pending.map((a) => (
+                <AssignmentCard
+                  key={a.id}
+                  assignment={a}
+                  selected={a.id === selectedId}
+                  onClick={() => setSelectedId(a.id)}
+                />
+              ))}
+            </Grid>
+          )}
+        </Section>
+
+        <Section title="Completed" count={completed.length} accent={commonStyles.purple}>
+          {completed.length === 0 ? (
+            <Empty text="Nothing completed yet." />
+          ) : (
+            <Grid>
+              {completed.map((a) => (
+                <AssignmentCard
+                  key={a.id}
+                  assignment={a}
+                  selected={a.id === selectedId}
+                  onClick={() => setSelectedId(a.id)}
+                />
+              ))}
+            </Grid>
+          )}
+        </Section>
+
+        {missing.length > 0 && (
+          <Section title="Missing" count={missing.length} accent={commonStyles.faded_purple}>
+            <Grid>
+              {missing.map((a) => (
+                <AssignmentCard
+                  key={a.id}
+                  assignment={a}
+                  selected={a.id === selectedId}
+                  onClick={() => setSelectedId(a.id)}
+                />
+              ))}
+            </Grid>
+          </Section>
+        )}
+      </div>
+
+      {/* RIGHT — side panel */}
+      <div
+        id="right-side-panel"
+        style={{
+          flex: 1,
+          minWidth: "280px",
+          maxWidth: "380px",
+          alignSelf: "flex-start",
+          maxHeight: "100%",
+          backgroundColor: commonStyles.purple,
+          borderRadius: "25px",
+          padding: "24px 20px",
+          display: "flex",
+          flexDirection: "column",
+          gap: "18px",
+          boxSizing: "border-box",
+          boxShadow: "0 4px 12px rgba(0, 0, 0, 0.2)",
+          overflow: "hidden",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: "14px",
+            flexShrink: 0,
+          }}
+        >
+          <div
+            style={{
+              width: "80px",
+              height: "80px",
+              borderRadius: "50%",
+              backgroundColor: commonStyles.white,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <img
+              src={`${defaultSetting.base_bot}bot.svg`}
+              alt="bot"
+              style={{ width: "68px", height: "68px", objectFit: "contain" }}
+            />
+          </div>
+
+          <h2
+            style={{
+              color: commonStyles.white,
+              fontSize: commonStyles.button_fontSize,
+              fontWeight: "bold",
+              margin: 0,
+              textAlign: "center",
+            }}
+          >
+            {selected ? "Assignment Detail" : "Grade History"}
+          </h2>
+        </div>
+
+        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", paddingRight: "4px" }}>
+          {selected && (
+            <DetailCard
+              assignment={selected}
+              onClose={() => setSelectedId(null)}
+              onStart={() => setInprogress(true)}
+            />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+## ending of file ./StudentDashboard.tsx ##
+

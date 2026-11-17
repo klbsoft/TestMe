@@ -1,5 +1,6 @@
 # API TARGETS and DEBUG
 api/target
+api/admin/target
 # Logs
 logs
 *.log

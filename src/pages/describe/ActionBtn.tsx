@@ -9,6 +9,8 @@ export default function ActionBtn() {
     const [waveHeights, setWaveHeights] = useState<number[]>([10, 20, 15, 30, 25, 35, 20, 15, 25, 30, 15, 20]);
     const { unitIndex, session, timer_current, is_recording, answer_state, label_message } = useAssignmentState();
     const {beep} = useBeep();
+   
+  
     // const [answer_state,setAswerState] = useState(0); 
     // const [dialog_state,setDialogState] = useState(0); 
     // const [button_label,setButtonLabel] = useState("Look at the image carefully...");//useState("Start Assigment");
@@ -19,8 +21,8 @@ export default function ActionBtn() {
     // const isDialog = useIsDialog(); 
     // const [completed,setCompleted] = useState(false); 
     const [buffer, setBuffer] = useState(null);
-    const ANALIZE_TIMER = defaultSetting.analize_picture_timer;
-    const ANWSWER_TIMER = defaultSetting.answer_picture_timer;
+    // const ANALIZE_TIMER = defaultSetting.analize_picture_timer;
+    // const ANWSWER_TIMER = defaultSetting.answer_picture_timer;
 
     useEffect(() => {
         if (buffer === null) return;
@@ -71,7 +73,13 @@ export default function ActionBtn() {
         });
 
         // 2️⃣ reset the timer state now that recording has begun
-        update({ timer_current: ANWSWER_TIMER, timer_started: ANWSWER_TIMER });
+        update((prev)=>{
+            const assigment = prev.session.assignment as SpeakingAssignment; 
+            const units = assigment.units as SpeakingUnit[]; 
+            const unit = units[prev.unitIndex]; 
+            const answer_timer = unit.speaking_time; 
+            return { timer_current: answer_timer, timer_started: answer_timer }
+        });
 
         // 3️⃣ wave animation (fast, visual only)
         const waveId = setInterval(() => {
@@ -88,13 +96,13 @@ export default function ActionBtn() {
                     finishRecording()
                         .then((blob) => {
                             setBuffer(blob);
-                            console.log("[recorder] blob ready:", blob.size, "bytes");
-                            const url = URL.createObjectURL(blob);
-                            const a = document.createElement("a");
-                            a.href = url;
-                            a.download = `unitIndex[${unitIndex}]_answerState[${answer_state}]_audio.webm`;
-                            a.click();
-                            URL.revokeObjectURL(url);
+                            // console.log("[recorder] blob ready:", blob.size, "bytes");
+                            // const url = URL.createObjectURL(blob);
+                            // const a = document.createElement("a");
+                            // a.href = url;
+                            // a.download = `unitIndex[${unitIndex}]_answerState[${answer_state}]_audio.webm`;
+                            // a.click();
+                            // URL.revokeObjectURL(url);
                         })
                         .catch((err) => {
                             console.warn("[recorder] finish failed:", err);
@@ -172,10 +180,17 @@ export default function ActionBtn() {
         // setButtonColor(commonStyles.faded_purple);
         // setButtonLabel("In Progress...");
         // console.log({index:unitIndex,state:answer_state});
-        update({
-            timer_current: ANALIZE_TIMER,
-            timer_started: ANALIZE_TIMER,
-            label_message: "Look at the image carefully...",
+       
+        update((prev)=>{
+            const assigment = prev.session.assignment as SpeakingAssignment; 
+            const units = assigment.units as SpeakingUnit[]; 
+            const unit = units[prev.unitIndex]; 
+            const analize_timer = unit.thinking_time; 
+            return {
+                timer_current: analize_timer,
+                timer_started: analize_timer,
+                label_message: "Look at the image carefully...",
+            }
         });
 
         // const assigment = session.assignment as SpeakingAssignment;

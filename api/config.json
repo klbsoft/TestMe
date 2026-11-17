@@ -1,4 +1,6 @@
 {
-  "db_path": "test.db",
-  "db_scheme": "scheme.sql"
+  "port": "",
+  "ip": "",
+  "max_upload":"",
+  "site":""
 }

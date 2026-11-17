@@ -1,10 +1,10 @@
 [package]
-name = "opti-via-api"
+name = "TestMe-API"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-axum = { version = "0.7", features = ["multipart"] }
+axum = { version = "0.7", features = ["multipart","ws"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 serde = { version = "1", features = ["derive"] }
 tower-http = { version = "0.5", features = ["cors"] }
@@ -26,5 +26,8 @@ hex = "0.4"               # Hex encoding
 jsonwebtoken = "9.3.1"
 mongodb = "3.1"
 uuid = { version = "1", features = ["v4"] }
+sanitize-filename = "0.5"
+mime_guess = "2"
+
 [dev-dependencies]
 tempfile = "3.8"          # Temporary files for testing

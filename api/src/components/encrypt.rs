@@ -12,12 +12,22 @@ use anyhow::{Result, anyhow};
 use sha2::{Sha256, Sha512, Digest};
 use sha3::Sha3_256;
 use rand::RngCore;
-
+use rand::Rng;
 pub struct CryptoService {
     master_key: [u8; 32],
 }
 
 impl CryptoService {
+
+
+
+    pub fn random_string(length: usize) -> String {
+        const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+        let mut rng = rand::thread_rng();
+        (0..length)
+            .map(|_| CHARSET[rng.gen_range(0..CHARSET.len())] as char)
+            .collect()
+    }
 
     pub fn new() -> Self {
         let mut key = [0u8; 32];

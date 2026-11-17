@@ -4,8 +4,6 @@ export type CommonStyles = {
   text_font_weight: string;
   button_fontSize: string;
   button_fontWeight: string;
-  green:string;
-  blue:string;
   white:string;
   purple:string;
   clear_purple:string;
@@ -13,6 +11,7 @@ export type CommonStyles = {
 };
 
 export type Setting = {
+  api_url: string; 
   base_path:string; 
   base_imgs:string; 
   base_icons:string; 
@@ -27,7 +26,8 @@ export type Setting = {
 };
 const base = "/testme/";
 export const defaultSetting: Setting = {
-  initial_count_down:1,    // 60
+  api_url: `/testme-api`,
+  initial_count_down: 60, // 60
   analize_picture_timer:1, // 20
   answer_picture_timer: 4,  // 45
   think_about_listening:5, // 20
@@ -45,10 +45,24 @@ export const commonStyles: CommonStyles = {
   text_font_weight: "400",
   button_fontSize: "clamp(16px, 2vw, 24px)", 
   button_fontWeight: "500",
-  green:"#6CC24A",
-  blue:"#0367C7",
   white:"#ffffff",
   purple: "#aa3bff",
   clear_purple:"#c084fc",
   faded_purple:"#c084fc80",
 };
+
+
+
+let _token = "";
+
+export function setToken(token: string) {
+  _token = token;
+}
+
+export function getToken(): string {
+  return _token;
+}
+
+export function clearToken() {
+  _token = "";
+}
